@@ -13,6 +13,7 @@ from memory import ExperienceReplay
 from models import bottle, Encoder, ObservationModel, RewardModel, TransitionModel
 from planner import MPCPlanner
 from utils import lineplot, write_video
+from tensorboardX import SummaryWriter
 
 
 # Hyperparameters
@@ -67,17 +68,21 @@ for k, v in vars(args).items():
 
 
 # Setup
-results_dir = os.path.join('results', args.id)
+results_dir = os.path.join('results-dev', '{}_{}'.format(args.env, args.id))
 os.makedirs(results_dir, exist_ok=True)
 np.random.seed(args.seed)
 torch.manual_seed(args.seed)
 if torch.cuda.is_available() and not args.disable_cuda:
+  print("using CUDA")
   args.device = torch.device('cuda')
   torch.cuda.manual_seed(args.seed)
 else:
+  print("using CPU")
   args.device = torch.device('cpu')
 metrics = {'steps': [], 'episodes': [], 'train_rewards': [], 'test_episodes': [], 'test_rewards': [], 'observation_loss': [], 'reward_loss': [], 'kl_loss': []}
 
+summary_name = results_dir + "/{}_{}_log"
+writer = SummaryWriter(summary_name.format(args.env, args.id))
 
 # Initialise training environment and experience replay memory
 env = Env(args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth)
@@ -278,6 +283,12 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     # Close test environments
     test_envs.close()
 
+  writer.add_scalar("train_reward", metrics['train_rewards'][-1], metrics['steps'][-1])
+  writer.add_scalar("train/episode_reward", metrics['train_rewards'][-1], metrics['steps'][-1]*args.action_repeat)
+  writer.add_scalar("observation_loss", metrics['observation_loss'][0][-1], metrics['steps'][-1])
+  writer.add_scalar("reward_loss", metrics['reward_loss'][0][-1], metrics['steps'][-1])
+  writer.add_scalar("kl_loss", metrics['kl_loss'][0][-1], metrics['steps'][-1]) 
+  print("episodes: {}, total_steps: {}, train_reward: {} ".format(metrics['episodes'][-1], metrics['steps'][-1], metrics['train_rewards'][-1]))
 
   # Checkpoint models
   if episode % args.checkpoint_interval == 0:
