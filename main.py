@@ -68,7 +68,7 @@ for k, v in vars(args).items():
 
 
 # Setup
-results_dir = os.path.join('results-dev', '{}_{}'.format(args.env, args.id))
+results_dir = os.path.join('results', '{}_{}'.format(args.env, args.id))
 os.makedirs(results_dir, exist_ok=True)
 np.random.seed(args.seed)
 torch.manual_seed(args.seed)
