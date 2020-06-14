@@ -136,7 +136,7 @@ class RewardModel(jit.ScriptModule):
   @jit.script_method
   def forward(self, belief, state):
     x = torch.cat([belief, state],dim=1)
-    print("value net input: ",x.size()) #train loop [2450, 230] data collection [12000, 230] : 2450=49batches*50timesteps: 12000=12horizon steps*1000 candidates
+    # print("value net input: ",x.size()) #train loop [2450, 230] data collection [12000, 230] : 2450=49batches*50timesteps: 12000=12horizon steps*1000 candidates
     hidden = self.act_fn(self.fc1(x))
     # print("value net 2nd layer input: ",hidden.size()) #train loop [2450, 200] data collection [12000, 200]
     hidden = self.act_fn(self.fc2(hidden))
