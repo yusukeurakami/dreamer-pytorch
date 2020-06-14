@@ -44,9 +44,11 @@ parser.add_argument('--overshooting-reward-scale', type=float, default=0, metava
 parser.add_argument('--global-kl-beta', type=float, default=0, metavar='βg', help='Global KL weight (0 to disable)')
 parser.add_argument('--free-nats', type=float, default=3, metavar='F', help='Free nats')
 parser.add_argument('--bit-depth', type=int, default=5, metavar='B', help='Image bit depth (quantisation)')
-parser.add_argument('--learning-rate', type=float, default=1e-3, metavar='α', help='Learning rate') 
+parser.add_argument('--model_learning-rate', type=float, default=1e-3, metavar='α', help='Learning rate') 
+parser.add_argument('--actor_learning-rate', type=float, default=8e-5, metavar='α', help='Learning rate') 
+parser.add_argument('--value_learning-rate', type=float, default=8e-5, metavar='α', help='Learning rate') 
 parser.add_argument('--learning-rate-schedule', type=int, default=0, metavar='αS', help='Linear learning rate schedule (optimisation steps from 0 to final learning rate; 0 to disable)') 
-parser.add_argument('--adam-epsilon', type=float, default=1e-4, metavar='ε', help='Adam optimiser epsilon value') 
+parser.add_argument('--adam-epsilon', type=float, default=1e-4, metavar='ε', help='Adam optimizer epsilon value') 
 # Note that original has a linear learning rate decay, but it seems unlikely that this makes a significant difference
 parser.add_argument('--grad-clip-norm', type=float, default=1000, metavar='C', help='Gradient clipping norm')
 parser.add_argument('--planning-horizon', type=int, default=12, metavar='H', help='Planning horizon distance')
@@ -80,7 +82,8 @@ if torch.cuda.is_available() and not args.disable_cuda:
 else:
   print("using CPU")
   args.device = torch.device('cpu')
-metrics = {'steps': [], 'episodes': [], 'train_rewards': [], 'test_episodes': [], 'test_rewards': [], 'observation_loss': [], 'reward_loss': [], 'kl_loss': []}
+metrics = {'steps': [], 'episodes': [], 'train_rewards': [], 'test_episodes': [], 'test_rewards': [], 
+           'observation_loss': [], 'reward_loss': [], 'kl_loss': [], 'actor_loss': [], 'value_loss': []}
 
 summary_name = results_dir + "/{}_{}_log"
 writer = SummaryWriter(summary_name.format(args.env, args.id))
@@ -110,15 +113,19 @@ transition_model = TransitionModel(args.belief_size, args.state_size, env.action
 observation_model = ObservationModel(args.symbolic_env, env.observation_size, args.belief_size, args.state_size, args.embedding_size, args.activation_function).to(device=args.device)
 reward_model = RewardModel(args.belief_size, args.state_size, args.hidden_size, args.activation_function).to(device=args.device)
 encoder = Encoder(args.symbolic_env, env.observation_size, args.embedding_size, args.activation_function).to(device=args.device)
+#actor_model = ActorModel()
+#value_model = ValueModel()
 param_list = list(transition_model.parameters()) + list(observation_model.parameters()) + list(reward_model.parameters()) + list(encoder.parameters())
-optimiser = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.learning_rate, eps=args.adam_epsilon)
+model_optimizer = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.model_learning_rate, eps=args.adam_epsilon)
+actor_optimizer = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.actor_learning_rate, eps=args.adam_epsilon)
+value_optimizer = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.value_learning_rate, eps=args.adam_epsilon)
 if args.models is not '' and os.path.exists(args.models):
   model_dicts = torch.load(args.models)
   transition_model.load_state_dict(model_dicts['transition_model'])
   observation_model.load_state_dict(model_dicts['observation_model'])
   reward_model.load_state_dict(model_dicts['reward_model'])
   encoder.load_state_dict(model_dicts['encoder'])
-  optimiser.load_state_dict(model_dicts['optimiser'])
+  model_optimizer.load_state_dict(model_dicts['model_optimizer'])
 planner = MPCPlanner(env.action_size, args.planning_horizon, args.optimisation_iters, args.candidates, args.top_candidates, transition_model, reward_model)
 global_prior = Normal(torch.zeros(args.batch_size, args.state_size, device=args.device), torch.ones(args.batch_size, args.state_size, device=args.device))  # Global prior N(0, I)
 free_nats = torch.full((1, ), args.free_nats, device=args.device)  # Allowed deviation in KL divergence
@@ -198,24 +205,61 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
 
     # Apply linearly ramping learning rate schedule
     if args.learning_rate_schedule != 0:
-      for group in optimiser.param_groups:
-        group['lr'] = min(group['lr'] + args.learning_rate / args.learning_rate_schedule, args.learning_rate)
+      for group in model_optimizer.param_groups:
+        group['lr'] = min(group['lr'] + args.model_learning_rate / args.model_learning_rate_schedule, args.model_learning_rate)
     # Update model parameters
-    optimiser.zero_grad()
+    model_optimizer.zero_grad()
     (observation_loss + reward_loss + kl_loss).backward()
     nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
-    optimiser.step()
+    model_optimizer.step()
     # Store (0) observation loss (1) reward loss (2) KL loss
     losses.append([observation_loss.item(), reward_loss.item(), kl_loss.item()])
+
+
+    #Dreamer implementation: actor loss calculation and optimization
+    # TODO: implement actor network
+    # TODO: implement imagine_ahead function
+    # TODO: implement imagine_reward function
+    # TODO: implement lambda_return function
+    # imagination_traj = imagine_ahead(posterior_states)
+    # imagination_reward = imagine_reward(imagination_traj)
+    # reward_pred = value_model(imagination_traj)
+    # returns = lambda_return(imagination_reward, reward_pred, lambda_=disclam)
+    actor_loss = -torch.mean(returns)
+    # Update model parameters
+    actor_optimizer.zero_grad()
+    actor_loss.backward()
+    nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
+    actor_optimizer.step()
+    # Store (3) actor loss
+    losses.append([actor_loss.item()])
+
+    #Dreamer implementation: value loss calculation and optimization
+    # TODO: implement value network.
+    #reward_pred = value_model(imagination_traj)
+    #target_return = imagination_reward.detach()
+    value_loss =  reward_loss #-torch.mean(imagination_trag.log_probs(imagination_reward))
+    # Update model parameters
+    value_optimizer.zero_grad()
+    value_loss.backward()
+    nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
+    value_optimizer.step()
+    # Store (4) value loss
+    losses.append([value_loss.item()])
+
 
   # Update and plot loss metrics
   losses = tuple(zip(*losses))
   metrics['observation_loss'].append(losses[0])
   metrics['reward_loss'].append(losses[1])
   metrics['kl_loss'].append(losses[2])
+  metrics['actor_loss'].append(losses[3])
+  metrics['value_loss'].append(losses[4])
   lineplot(metrics['episodes'][-len(metrics['observation_loss']):], metrics['observation_loss'], 'observation_loss', results_dir)
   lineplot(metrics['episodes'][-len(metrics['reward_loss']):], metrics['reward_loss'], 'reward_loss', results_dir)
   lineplot(metrics['episodes'][-len(metrics['kl_loss']):], metrics['kl_loss'], 'kl_loss', results_dir)
+  lineplot(metrics['episodes'][-len(metrics['actor_loss']):], metrics['actor_loss'], 'actor_loss', results_dir)
+  lineplot(metrics['episodes'][-len(metrics['value_loss']):], metrics['value_loss'], 'value_loss', results_dir)
 
 
   # Data collection
@@ -288,12 +332,23 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
   writer.add_scalar("train/episode_reward", metrics['train_rewards'][-1], metrics['steps'][-1]*args.action_repeat)
   writer.add_scalar("observation_loss", metrics['observation_loss'][0][-1], metrics['steps'][-1])
   writer.add_scalar("reward_loss", metrics['reward_loss'][0][-1], metrics['steps'][-1])
-  writer.add_scalar("kl_loss", metrics['kl_loss'][0][-1], metrics['steps'][-1]) 
+  writer.add_scalar("kl_loss", metrics['kl_loss'][0][-1], metrics['steps'][-1])
+  writer.add_scalar("actor_loss", metrics['actor_loss'][0][-1], metrics['steps'][-1])
+  writer.add_scalar("value_loss", metrics['value_loss'][0][-1], metrics['steps'][-1])  
   print("episodes: {}, total_steps: {}, train_reward: {} ".format(metrics['episodes'][-1], metrics['steps'][-1], metrics['train_rewards'][-1]))
 
   # Checkpoint models
   if episode % args.checkpoint_interval == 0:
-    torch.save({'transition_model': transition_model.state_dict(), 'observation_model': observation_model.state_dict(), 'reward_model': reward_model.state_dict(), 'encoder': encoder.state_dict(), 'optimiser': optimiser.state_dict()}, os.path.join(results_dir, 'models_%d.pth' % episode))
+    torch.save({'transition_model': transition_model.state_dict(),
+                'observation_model': observation_model.state_dict(),
+                'reward_model': reward_model.state_dict(),
+                'encoder': encoder.state_dict(),
+                'actor_model': actor_model.state_dict(),
+                'value_model': value_model.state_dict(),
+                'model_optimizer': model_optimizer.state_dict(),
+                'actor_optimizer': actor_optimizer.state_dict(),
+                'value_optimizer': value_optimizer.state_dict()
+                }, os.path.join(results_dir, 'models_%d.pth' % episode))
     if args.checkpoint_experience:
       torch.save(D, os.path.join(results_dir, 'experience.pth'))  # Warning: will fail with MemoryError with large memory sizes
 
