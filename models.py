@@ -2,14 +2,23 @@ from typing import Optional, List
 import torch
 from torch import jit, nn
 from torch.nn import functional as F
+from torch.distributions.normal import Normal
 
 
 # Wraps the input tuple for a function to process a time x batch x features sequence in batch x features (assumes one output)
 def bottle(f, x_tuple):
   x_sizes = tuple(map(lambda x: x.size(), x_tuple))
+  # model:  print("bottle: x_sizes ", x_sizes) (torch.Size([49, 50, 3, 64, 64]),)
+  # reward: print("bottle: x_sizes ", x_sizes) (torch.Size([49, 50, 200]), torch.Size([49, 50, 30]))
+  # print("??? function ", type(map(lambda x: x[0].view(x[1][0] * x[1][1], *x[1][2:]), zip(x_tuple, x_sizes)))) [2450, 230]
   y = f(*map(lambda x: x[0].view(x[1][0] * x[1][1], *x[1][2:]), zip(x_tuple, x_sizes)))
+  # model:  print("bottle: output before reshape ", y.size()) torch.Size([2450])
+  # reward: print("bottle: output before reshape ", y.size()) torch.Size([2450, 1024])
   y_size = y.size()
-  return y.view(x_sizes[0][0], x_sizes[0][1], *y_size[1:])
+  output = y.view(x_sizes[0][0], x_sizes[0][1], *y_size[1:])
+  # model:  print("bottle: output after reshape ", output.size())  torch.Size([49, 50])
+  # reward: print("bottle: output after reshape ", output.size())  torch.Size([49, 50, 1024])
+  return output
 
 
 class TransitionModel(jit.ScriptModule):
@@ -117,6 +126,27 @@ def ObservationModel(symbolic, observation_size, belief_size, state_size, embedd
 
 class RewardModel(jit.ScriptModule):
   def __init__(self, belief_size, state_size, hidden_size, activation_function='relu'):
+    # [--belief-size: 200, --hidden-size: 200, --state-size: 30]
+    super().__init__()
+    self.act_fn = getattr(F, activation_function)
+    self.fc1 = nn.Linear(belief_size + state_size, hidden_size)
+    self.fc2 = nn.Linear(hidden_size, hidden_size)
+    self.fc3 = nn.Linear(hidden_size, 1)
+
+  @jit.script_method
+  def forward(self, belief, state):
+    x = torch.cat([belief, state],dim=1)
+    print("value net input: ",x.size()) #train loop [2450, 230] data collection [12000, 230] : 2450=49batches*50timesteps: 12000=12horizon steps*1000 candidates
+    hidden = self.act_fn(self.fc1(x))
+    # print("value net 2nd layer input: ",hidden.size()) #train loop [2450, 200] data collection [12000, 200]
+    hidden = self.act_fn(self.fc2(hidden))
+    # print("value net 3rd layer input: ",hidden.size()) #train loop [2450, 200] data collection [12000, 200]
+    reward = self.fc3(hidden).squeeze(dim=1)
+    # print("value net last layer output: ",reward.size()) #train loop [2450] data collection [12000]
+    return reward
+
+class ValueModel(jit.ScriptModule):
+  def __init__(self, belief_size, state_size, hidden_size, activation_function='elu'):
     super().__init__()
     self.act_fn = getattr(F, activation_function)
     self.fc1 = nn.Linear(belief_size + state_size, hidden_size)
@@ -128,7 +158,7 @@ class RewardModel(jit.ScriptModule):
     hidden = self.act_fn(self.fc1(torch.cat([belief, state], dim=1)))
     hidden = self.act_fn(self.fc2(hidden))
     reward = self.fc3(hidden).squeeze(dim=1)
-    return reward
+    return Normal(reward,1)
 
 
 class SymbolicEncoder(jit.ScriptModule):

@@ -21,12 +21,13 @@ class MPCPlanner(jit.ScriptModule):
     # Initialize factorized belief over action sequences q(a_t:t+H) ~ N(0, I)
     action_mean, action_std_dev = torch.zeros(self.planning_horizon, B, 1, self.action_size, device=belief.device), torch.ones(self.planning_horizon, B, 1, self.action_size, device=belief.device)
     for _ in range(self.optimisation_iters):
+      # print("optimization_iters",_)
       # Evaluate J action sequences from the current belief (over entire sequence at once, batched over particles)
       actions = (action_mean + action_std_dev * torch.randn(self.planning_horizon, B, self.candidates, self.action_size, device=action_mean.device)).view(self.planning_horizon, B * self.candidates, self.action_size)  # Sample actions (time x (batch x candidates) x actions)
       # Sample next states
-      beliefs, states, _, _ = self.transition_model(state, actions, belief)
+      beliefs, states, _, _ = self.transition_model(state, actions, belief)# [12, 1000, 200] [12, 1000, 30] : 12 horizon steps; 1000 candidates
       # Calculate expected returns (technically sum of rewards over planning horizon)
-      returns = self.reward_model(beliefs.view(-1, H), states.view(-1, Z)).view(self.planning_horizon, -1).sum(dim=0)
+      returns = self.reward_model(beliefs.view(-1, H), states.view(-1, Z)).view(self.planning_horizon, -1).sum(dim=0) #output from r-model[12000]->view[12, 1000]->sum[1000]
       # Re-fit belief to the K best action sequences
       _, topk = returns.reshape(B, self.candidates).topk(self.top_candidates, dim=1, largest=True, sorted=False)
       topk += self.candidates * torch.arange(0, B, dtype=torch.int64, device=topk.device).unsqueeze(dim=1)  # Fix indices for unrolled actions

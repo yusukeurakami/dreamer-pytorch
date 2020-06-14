@@ -48,4 +48,12 @@ class ExperienceReplay():
   # Returns a batch of sequence chunks uniformly sampled from the memory
   def sample(self, n, L):
     batch = self._retrieve_batch(np.asarray([self._sample_idx(L) for _ in range(n)]), n, L)
+    # print(np.asarray([self._sample_idx(L) for _ in range(n)]))
+    # [1578 1579 1580 ... 1625 1626 1627]                                                                                                                                        | 0/100 [00:00<?, ?it/s]
+    # [1049 1050 1051 ... 1096 1097 1098]
+    # [1236 1237 1238 ... 1283 1284 1285]
+    # ...
+    # [2199 2200 2201 ... 2246 2247 2248]
+    # [ 686  687  688 ...  733  734  735]
+    # [1377 1378 1379 ... 1424 1425 1426]]
     return [torch.as_tensor(item).to(device=self.device) for item in batch]

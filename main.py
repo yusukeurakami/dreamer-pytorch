@@ -109,6 +109,7 @@ elif not args.test:
 
 
 # Initialise model parameters randomly
+# [--belief-size: 200, --hidden-size: 200, --state-size: 30]
 transition_model = TransitionModel(args.belief_size, args.state_size, env.action_size, args.hidden_size, args.embedding_size, args.activation_function).to(device=args.device)
 observation_model = ObservationModel(args.symbolic_env, env.observation_size, args.belief_size, args.state_size, args.embedding_size, args.activation_function).to(device=args.device)
 reward_model = RewardModel(args.belief_size, args.state_size, args.hidden_size, args.activation_function).to(device=args.device)
@@ -117,14 +118,16 @@ encoder = Encoder(args.symbolic_env, env.observation_size, args.embedding_size, 
 #value_model = ValueModel()
 param_list = list(transition_model.parameters()) + list(observation_model.parameters()) + list(reward_model.parameters()) + list(encoder.parameters())
 model_optimizer = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.model_learning_rate, eps=args.adam_epsilon)
-actor_optimizer = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.actor_learning_rate, eps=args.adam_epsilon)
-value_optimizer = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.value_learning_rate, eps=args.adam_epsilon)
+# actor_optimizer = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.actor_learning_rate, eps=args.adam_epsilon)
+# value_optimizer = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.value_learning_rate, eps=args.adam_epsilon)
 if args.models is not '' and os.path.exists(args.models):
   model_dicts = torch.load(args.models)
   transition_model.load_state_dict(model_dicts['transition_model'])
   observation_model.load_state_dict(model_dicts['observation_model'])
   reward_model.load_state_dict(model_dicts['reward_model'])
   encoder.load_state_dict(model_dicts['encoder'])
+  # actor_model.load_state_dict(model_dicts['actor_model'])
+  # value_model.load_state_dict(model_dicts['value_model'])
   model_optimizer.load_state_dict(model_dicts['model_optimizer'])
 planner = MPCPlanner(env.action_size, args.planning_horizon, args.optimisation_iters, args.candidates, args.top_candidates, transition_model, reward_model)
 global_prior = Normal(torch.zeros(args.batch_size, args.state_size, device=args.device), torch.ones(args.batch_size, args.state_size, device=args.device))  # Global prior N(0, I)
@@ -133,6 +136,7 @@ free_nats = torch.full((1, ), args.free_nats, device=args.device)  # Allowed dev
 
 def update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, observation, explore=False):
   # Infer belief over current state q(s_t|o≤t,a<t) from the history
+  # print("action size: ",action.size()) torch.Size([1, 6])
   belief, _, _, _, posterior_state, _, _ = transition_model(posterior_state, action.unsqueeze(dim=0), belief, encoder(observation).unsqueeze(dim=0))  # Action and observation need extra time dimension
   belief, posterior_state = belief.squeeze(dim=0), posterior_state.squeeze(dim=0)  # Remove time dimension from belief/state
   action = planner(belief, posterior_state)  # Get action from planner(q(s_t|o≤t,a<t), p)
@@ -171,16 +175,26 @@ if args.test:
 for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total=args.episodes, initial=metrics['episodes'][-1] + 1):
   # Model fitting
   losses = []
+
+  print("training loop")
   for s in tqdm(range(args.collect_interval)):
     # Draw sequence chunks {(o_t, a_t, r_t+1, terminal_t+1)} ~ D uniformly at random from the dataset (including terminal flags)
-    observations, actions, rewards, nonterminals = D.sample(args.batch_size, args.chunk_size)  # Transitions start at time t = 0
+    observations, actions, rewards, nonterminals = D.sample(args.batch_size, args.chunk_size)  # Transitions start at time t = 0 # batch_size=50, chunk_size=50, Output size = [50 50]. Chunk is the length of the time sequence.
+    # print("rewards size: ",rewards[:-1].size()) # [49, 50]
     # Create initial belief and state for time t = 0
     init_belief, init_state = torch.zeros(args.batch_size, args.belief_size, device=args.device), torch.zeros(args.batch_size, args.state_size, device=args.device)
     # Update belief/state using posterior from previous belief/state, previous action and current observation (over entire sequence at once)
     beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = transition_model(init_state, actions[:-1], init_belief, bottle(encoder, (observations[1:], )), nonterminals[:-1])
     # Calculate observation likelihood, reward likelihood and KL losses (for t = 0 only for latent overshooting); sum over final dims, average over batch and time (original implementation, though paper seems to miss 1/T scaling?)
-    observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
-    reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards[:-1], reduction='none').mean(dim=(0, 1))
+    # TODO: change MSE loss to cross entropy loss: reconstruction loss
+    observation_dist = Normal(bottle(observation_model, (beliefs, posterior_states)), 1)
+    observation_loss = observation_dist.log_prob(observations[1:]).mean(dim=(0, 1))
+    # observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
+    # TODO: change MSE loss to cross entropy loss: reward loss
+    reward_dist = Normal(bottle(reward_model, (beliefs, posterior_states)),1)
+    reward_loss = reward_dist.log_prob(rewards[:-1]).mean(dim=(0, 1))
+    # reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards[:-1], reduction='none').mean(dim=(0, 1))
+    # transition loss
     kl_loss = torch.max(kl_divergence(Normal(posterior_means, posterior_std_devs), Normal(prior_means, prior_std_devs)).sum(dim=2), free_nats).mean(dim=(0, 1))  # Note that normalisation by overshooting distance and weighting by overshooting distance cancel out
     if args.global_kl_beta != 0:
       kl_loss += args.global_kl_beta * kl_divergence(Normal(posterior_means, posterior_std_devs), global_prior).sum(dim=2).mean(dim=(0, 1))
@@ -225,27 +239,27 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     # imagination_reward = imagine_reward(imagination_traj)
     # reward_pred = value_model(imagination_traj)
     # returns = lambda_return(imagination_reward, reward_pred, lambda_=disclam)
-    actor_loss = -torch.mean(returns)
-    # Update model parameters
-    actor_optimizer.zero_grad()
-    actor_loss.backward()
-    nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
-    actor_optimizer.step()
-    # Store (3) actor loss
-    losses.append([actor_loss.item()])
+    # actor_loss = -torch.mean(returns)
+    # # Update model parameters
+    # actor_optimizer.zero_grad()
+    # actor_loss.backward()
+    # nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
+    # actor_optimizer.step()
+    # # Store (3) actor loss
+    # losses.append([actor_loss.item()])
 
     #Dreamer implementation: value loss calculation and optimization
     # TODO: implement value network.
     #reward_pred = value_model(imagination_traj)
     #target_return = imagination_reward.detach()
-    value_loss =  reward_loss #-torch.mean(imagination_trag.log_probs(imagination_reward))
-    # Update model parameters
-    value_optimizer.zero_grad()
-    value_loss.backward()
-    nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
-    value_optimizer.step()
-    # Store (4) value loss
-    losses.append([value_loss.item()])
+    # value_loss =  reward_loss #-torch.mean(imagination_trag.log_probs(imagination_reward))
+    # # Update model parameters
+    # value_optimizer.zero_grad()
+    # value_loss.backward()
+    # nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
+    # value_optimizer.step()
+    # # Store (4) value loss
+    # losses.append([value_loss.item()])
 
 
   # Update and plot loss metrics
@@ -253,21 +267,23 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
   metrics['observation_loss'].append(losses[0])
   metrics['reward_loss'].append(losses[1])
   metrics['kl_loss'].append(losses[2])
-  metrics['actor_loss'].append(losses[3])
-  metrics['value_loss'].append(losses[4])
+  # metrics['actor_loss'].append(losses[3])
+  # metrics['value_loss'].append(losses[4])
   lineplot(metrics['episodes'][-len(metrics['observation_loss']):], metrics['observation_loss'], 'observation_loss', results_dir)
   lineplot(metrics['episodes'][-len(metrics['reward_loss']):], metrics['reward_loss'], 'reward_loss', results_dir)
   lineplot(metrics['episodes'][-len(metrics['kl_loss']):], metrics['kl_loss'], 'kl_loss', results_dir)
-  lineplot(metrics['episodes'][-len(metrics['actor_loss']):], metrics['actor_loss'], 'actor_loss', results_dir)
-  lineplot(metrics['episodes'][-len(metrics['value_loss']):], metrics['value_loss'], 'value_loss', results_dir)
+  # lineplot(metrics['episodes'][-len(metrics['actor_loss']):], metrics['actor_loss'], 'actor_loss', results_dir)
+  # lineplot(metrics['episodes'][-len(metrics['value_loss']):], metrics['value_loss'], 'value_loss', results_dir)
 
 
   # Data collection
+  print("Data collection")
   with torch.no_grad():
     observation, total_reward = env.reset(), 0
     belief, posterior_state, action = torch.zeros(1, args.belief_size, device=args.device), torch.zeros(1, args.state_size, device=args.device), torch.zeros(1, env.action_size, device=args.device)
     pbar = tqdm(range(args.max_episode_length // args.action_repeat))
     for t in pbar:
+      # print("step",t)
       belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, observation.to(device=args.device), explore=True)
       D.append(observation, action.cpu(), reward, done)
       total_reward += reward
@@ -286,6 +302,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
 
 
   # Test model
+  print("Test model")
   if episode % args.test_interval == 0:
     # Set models to eval mode
     transition_model.eval()
@@ -333,8 +350,8 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
   writer.add_scalar("observation_loss", metrics['observation_loss'][0][-1], metrics['steps'][-1])
   writer.add_scalar("reward_loss", metrics['reward_loss'][0][-1], metrics['steps'][-1])
   writer.add_scalar("kl_loss", metrics['kl_loss'][0][-1], metrics['steps'][-1])
-  writer.add_scalar("actor_loss", metrics['actor_loss'][0][-1], metrics['steps'][-1])
-  writer.add_scalar("value_loss", metrics['value_loss'][0][-1], metrics['steps'][-1])  
+  # writer.add_scalar("actor_loss", metrics['actor_loss'][0][-1], metrics['steps'][-1])
+  # writer.add_scalar("value_loss", metrics['value_loss'][0][-1], metrics['steps'][-1])  
   print("episodes: {}, total_steps: {}, train_reward: {} ".format(metrics['episodes'][-1], metrics['steps'][-1], metrics['train_rewards'][-1]))
 
   # Checkpoint models
@@ -343,11 +360,11 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
                 'observation_model': observation_model.state_dict(),
                 'reward_model': reward_model.state_dict(),
                 'encoder': encoder.state_dict(),
-                'actor_model': actor_model.state_dict(),
-                'value_model': value_model.state_dict(),
+                # 'actor_model': actor_model.state_dict(),
+                # 'value_model': value_model.state_dict(),
                 'model_optimizer': model_optimizer.state_dict(),
-                'actor_optimizer': actor_optimizer.state_dict(),
-                'value_optimizer': value_optimizer.state_dict()
+                # 'actor_optimizer': actor_optimizer.state_dict(),
+                # 'value_optimizer': value_optimizer.state_dict()
                 }, os.path.join(results_dir, 'models_%d.pth' % episode))
     if args.checkpoint_experience:
       torch.save(D, os.path.join(results_dir, 'experience.pth'))  # Warning: will fail with MemoryError with large memory sizes
