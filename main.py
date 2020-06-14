@@ -188,12 +188,14 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     # Calculate observation likelihood, reward likelihood and KL losses (for t = 0 only for latent overshooting); sum over final dims, average over batch and time (original implementation, though paper seems to miss 1/T scaling?)
     # TODO: change MSE loss to cross entropy loss: reconstruction loss
     observation_dist = Normal(bottle(observation_model, (beliefs, posterior_states)), 1)
-    observation_loss = observation_dist.log_prob(observations[1:]).mean(dim=(0, 1))
+    observation_loss = -observation_dist.log_prob(observations[1:]).sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
     # observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
+    # print(observation_loss.size(), observation_loss) # entropy -11802.2715, #MSE [], 1020.7104
     # TODO: change MSE loss to cross entropy loss: reward loss
     reward_dist = Normal(bottle(reward_model, (beliefs, posterior_states)),1)
-    reward_loss = reward_dist.log_prob(rewards[:-1]).mean(dim=(0, 1))
+    reward_loss = -reward_dist.log_prob(rewards[:-1]).mean(dim=(0, 1))
     # reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards[:-1], reduction='none').mean(dim=(0, 1))
+    # print(reward_loss.size(), reward_loss) # entropy [] ,-0.9309 #MSE [], 0.0239
     # transition loss
     kl_loss = torch.max(kl_divergence(Normal(posterior_means, posterior_std_devs), Normal(prior_means, prior_std_devs)).sum(dim=2), free_nats).mean(dim=(0, 1))  # Note that normalisation by overshooting distance and weighting by overshooting distance cancel out
     if args.global_kl_beta != 0:
