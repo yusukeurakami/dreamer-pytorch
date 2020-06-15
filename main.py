@@ -10,7 +10,7 @@ from torchvision.utils import make_grid, save_image
 from tqdm import tqdm
 from env import CONTROL_SUITE_ENVS, Env, GYM_ENVS, EnvBatcher
 from memory import ExperienceReplay
-from models import bottle, Encoder, ObservationModel, RewardModel, TransitionModel
+from models import bottle, Encoder, ObservationModel, RewardModel, TransitionModel, ValueModel
 from planner import MPCPlanner
 from utils import lineplot, write_video
 from tensorboardX import SummaryWriter
@@ -26,7 +26,8 @@ parser.add_argument('--env', type=str, default='Pendulum-v0', choices=GYM_ENVS +
 parser.add_argument('--symbolic-env', action='store_true', help='Symbolic features')
 parser.add_argument('--max-episode-length', type=int, default=1000, metavar='T', help='Max episode length')
 parser.add_argument('--experience-size', type=int, default=1000000, metavar='D', help='Experience replay size')  # Original implementation has an unlimited buffer size, but 1 million is the max experience collected anyway
-parser.add_argument('--activation-function', type=str, default='relu', choices=dir(F), help='Model activation function')
+parser.add_argument('--cnn-activation-function', type=str, default='relu', choices=dir(F), help='Model activation function for a convolution layer')
+parser.add_argument('--dense-activation-function', type=str, default='relu', choices=dir(F), help='Model activation function a dense layer')
 parser.add_argument('--embedding-size', type=int, default=1024, metavar='E', help='Observation embedding size')  # Note that the default encoder for visual observations outputs a 1024D vector; for other embedding sizes an additional fully-connected layer is used
 parser.add_argument('--hidden-size', type=int, default=200, metavar='H', help='Hidden size')
 parser.add_argument('--belief-size', type=int, default=200, metavar='H', help='Belief/hidden size')
@@ -110,12 +111,12 @@ elif not args.test:
 
 # Initialise model parameters randomly
 # [--belief-size: 200, --hidden-size: 200, --state-size: 30]
-transition_model = TransitionModel(args.belief_size, args.state_size, env.action_size, args.hidden_size, args.embedding_size, args.activation_function).to(device=args.device)
-observation_model = ObservationModel(args.symbolic_env, env.observation_size, args.belief_size, args.state_size, args.embedding_size, args.activation_function).to(device=args.device)
-reward_model = RewardModel(args.belief_size, args.state_size, args.hidden_size, args.activation_function).to(device=args.device)
-encoder = Encoder(args.symbolic_env, env.observation_size, args.embedding_size, args.activation_function).to(device=args.device)
+transition_model = TransitionModel(args.belief_size, args.state_size, env.action_size, args.hidden_size, args.embedding_size, args.dense_activation_function).to(device=args.device)
+observation_model = ObservationModel(args.symbolic_env, env.observation_size, args.belief_size, args.state_size, args.embedding_size, args.cnn_activation_function).to(device=args.device)
+reward_model = RewardModel(args.belief_size, args.state_size, args.hidden_size, args.dense_activation_function).to(device=args.device)
+encoder = Encoder(args.symbolic_env, env.observation_size, args.embedding_size, args.cnn_activation_function).to(device=args.device)
 #actor_model = ActorModel()
-#value_model = ValueModel()
+value_model = ValueModel(args.belief_size, args.state_size, args.hidden_size, args.dense_activation_function).to(device=args.device)
 param_list = list(transition_model.parameters()) + list(observation_model.parameters()) + list(reward_model.parameters()) + list(encoder.parameters())
 model_optimizer = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.model_learning_rate, eps=args.adam_epsilon)
 # actor_optimizer = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.actor_learning_rate, eps=args.adam_epsilon)
@@ -129,6 +130,7 @@ if args.models is not '' and os.path.exists(args.models):
   # actor_model.load_state_dict(model_dicts['actor_model'])
   # value_model.load_state_dict(model_dicts['value_model'])
   model_optimizer.load_state_dict(model_dicts['model_optimizer'])
+# TODO: Implement dreamer-planner
 planner = MPCPlanner(env.action_size, args.planning_horizon, args.optimisation_iters, args.candidates, args.top_candidates, transition_model, reward_model)
 global_prior = Normal(torch.zeros(args.batch_size, args.state_size, device=args.device), torch.ones(args.batch_size, args.state_size, device=args.device))  # Global prior N(0, I)
 free_nats = torch.full((1, ), args.free_nats, device=args.device)  # Allowed deviation in KL divergence
@@ -186,12 +188,12 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     # Update belief/state using posterior from previous belief/state, previous action and current observation (over entire sequence at once)
     beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = transition_model(init_state, actions[:-1], init_belief, bottle(encoder, (observations[1:], )), nonterminals[:-1])
     # Calculate observation likelihood, reward likelihood and KL losses (for t = 0 only for latent overshooting); sum over final dims, average over batch and time (original implementation, though paper seems to miss 1/T scaling?)
-    # TODO: change MSE loss to cross entropy loss: reconstruction loss
+    ### DONE: change MSE loss to log_prob loss: reconstruction loss
     observation_dist = Normal(bottle(observation_model, (beliefs, posterior_states)), 1)
     observation_loss = -observation_dist.log_prob(observations[1:]).sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
     # observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
     # print(observation_loss.size(), observation_loss) # entropy -11802.2715, #MSE [], 1020.7104
-    # TODO: change MSE loss to cross entropy loss: reward loss
+    ### DONE: change MSE loss to log_prob loss: reward loss
     reward_dist = Normal(bottle(reward_model, (beliefs, posterior_states)),1)
     reward_loss = -reward_dist.log_prob(rewards[:-1]).mean(dim=(0, 1))
     # reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards[:-1], reduction='none').mean(dim=(0, 1))
