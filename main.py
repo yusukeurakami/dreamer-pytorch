@@ -10,7 +10,7 @@ from torchvision.utils import make_grid, save_image
 from tqdm import tqdm
 from env import CONTROL_SUITE_ENVS, Env, GYM_ENVS, EnvBatcher
 from memory import ExperienceReplay
-from models import bottle, Encoder, ObservationModel, RewardModel, TransitionModel, ValueModel
+from models import bottle, Encoder, ObservationModel, RewardModel, TransitionModel, ValueModel, ActorModel
 from planner import MPCPlanner
 from utils import lineplot, write_video
 from tensorboardX import SummaryWriter
@@ -115,8 +115,10 @@ transition_model = TransitionModel(args.belief_size, args.state_size, env.action
 observation_model = ObservationModel(args.symbolic_env, env.observation_size, args.belief_size, args.state_size, args.embedding_size, args.cnn_activation_function).to(device=args.device)
 reward_model = RewardModel(args.belief_size, args.state_size, args.hidden_size, args.dense_activation_function).to(device=args.device)
 encoder = Encoder(args.symbolic_env, env.observation_size, args.embedding_size, args.cnn_activation_function).to(device=args.device)
-#actor_model = ActorModel()
+#########Dreamer Model Begin###########
+actor_model = ActorModel(args.belief_size, args.state_size, args.hidden_size, env.action_size, args.dense_activation_function).to(device=args.device)
 value_model = ValueModel(args.belief_size, args.state_size, args.hidden_size, args.dense_activation_function).to(device=args.device)
+#########Dreamer Model End  ###########
 param_list = list(transition_model.parameters()) + list(observation_model.parameters()) + list(reward_model.parameters()) + list(encoder.parameters())
 model_optimizer = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.model_learning_rate, eps=args.adam_epsilon)
 # actor_optimizer = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.actor_learning_rate, eps=args.adam_epsilon)
@@ -235,7 +237,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
 
 
     #Dreamer implementation: actor loss calculation and optimization
-    # TODO: implement actor network
+    # DONE: implement actor network
     # TODO: implement imagine_ahead function
     # TODO: implement imagine_reward function
     # TODO: implement lambda_return function
@@ -253,7 +255,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     # losses.append([actor_loss.item()])
 
     #Dreamer implementation: value loss calculation and optimization
-    # TODO: implement value network.
+    # DONE: implement value network.
     #reward_pred = value_model(imagination_traj)
     #target_return = imagination_reward.detach()
     # value_loss =  reward_loss #-torch.mean(imagination_trag.log_probs(imagination_reward))

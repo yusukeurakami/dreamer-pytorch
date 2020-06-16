@@ -3,6 +3,8 @@ import torch
 from torch import jit, nn
 from torch.nn import functional as F
 from torch.distributions.normal import Normal
+from torch.distributions.transforms import Transform, TanhTransform
+import numpy as np
 
 
 # Wraps the input tuple for a function to process a time x batch x features sequence in batch x features (assumes one output)
@@ -164,6 +166,47 @@ class ValueModel(jit.ScriptModule):
     reward = self.fc4(hidden).squeeze(dim=1)
     return reward
 
+class ActorModel(jit.ScriptModule):
+  def __init__(self, belief_size, state_size, hidden_size, action_size, dist='tanh_normal',
+                activation_function='elu', min_std=1e-4, init_std=5, mean_scale=5):
+    super().__init__()
+    self.act_fn = getattr(F, activation_function)
+    self.fc1 = nn.Linear(belief_size + state_size, hidden_size)
+    self.fc2 = nn.Linear(hidden_size, hidden_size)
+    self.fc3 = nn.Linear(hidden_size, hidden_size)
+    self.fc4 = nn.Linear(hidden_size, hidden_size)
+    self.fc5 = nn.Linear(hidden_size, 2*action_size)
+
+    self._dist = dist
+    self._min_std = min_std
+    self._init_std = init_std
+    self._mean_scale = mean_scale
+
+  @jit.script_method
+  def forward(self, belief, state):
+    raw_init_std = torch.log(torch.exp(self._init_std) - 1)
+    x = torch.cat([belief, state],dim=1)
+    hidden = self.act_fn(self.fc1(x))
+    hidden = self.act_fn(self.fc2(hidden))
+    hidden = self.act_fn(self.fc3(hidden))
+    hidden = self.act_fn(self.fc4(hidden))
+    action = self.fc5(hidden).squeeze(dim=1)
+
+    action_mean, action_std_dev = torch.chunk(action, 2, dim=1)
+    action_mean = self._mean_scale * torch.tanh(action_mean / self._mean_scale)
+    action_std = F.softplus(action_std_dev + raw_init_std) + self._min_std
+    # dist = Normal(action_mean, action_std)
+    # dist = TanhTransform(dist)
+    # dist = SampleDist(dist)
+    return action_mean, action_std
+
+  def get_action(self, belief, state, det=False):
+    action_mean, action_std = self.forward(belief, state)
+    dist = Normal(action_mean, action_std)
+    dist = TanhTransform(dist)
+    dist = SampleDist(dist)
+    if det: return dist.mode()
+    else: return dist.sample()
 
 class SymbolicEncoder(jit.ScriptModule):
   def __init__(self, observation_size, embedding_size, activation_function='relu'):
@@ -210,3 +253,37 @@ def Encoder(symbolic, observation_size, embedding_size, activation_function='rel
     return SymbolicEncoder(observation_size, embedding_size, activation_function)
   else:
     return VisualEncoder(embedding_size, activation_function)
+
+class SampleDist:
+
+  def __init__(self, dist, samples=100):
+    self._dist = dist
+    self._samples = samples
+
+  @property
+  def name(self):
+    return 'SampleDist'
+
+  def __getattr__(self, name):
+    return getattr(self._dist, name)
+
+  def mean(self):
+    samples = self._dist.sample(self._samples)
+    return torch.mean(samples,0)
+
+  def mode(self):
+    sample = self._dist.sample(self._samples)
+    print("sample: ", sample.size())
+    logprob = self._dist.log_prob(sample)
+    print("logprob: ",logprob.size())
+    # still not sure how the following parts work
+    logprob_argmax = torch.argmax(logprob,0)
+    print("logprob argmax:", logprob_argmax.size())
+    sample = sample[logprob_argmax]
+    print("sample selected: ",sample.size())
+    return sample
+
+  def entropy(self):
+    sample = self._dist.sample(self._samples)
+    logprob = self.log_prob(sample)
+    return -torch.mean(logprob,0)
