@@ -4,6 +4,7 @@ from torch import jit, nn
 from torch.nn import functional as F
 from torch.distributions.normal import Normal
 from torch.distributions.transforms import Transform, TanhTransform
+from torch.distributions.transformed_distribution import TransformedDistribution
 import numpy as np
 
 
@@ -49,15 +50,22 @@ class TransitionModel(jit.ScriptModule):
   # s : -x--X--X--X--X--X-
   @jit.script_method
   def forward(self, prev_state:torch.Tensor, actions:torch.Tensor, prev_belief:torch.Tensor, observations:Optional[torch.Tensor]=None, nonterminals:Optional[torch.Tensor]=None) -> List[torch.Tensor]:
+    '''
+    Input: init_belief, init_state:  torch.Size([50, 200]) torch.Size([50, 30])
+    Output: beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs
+            torch.Size([49, 50, 200]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30])
+    '''
     # Create lists for hidden states (cannot use single tensor as buffer because autograd won't work with inplace writes)
     T = actions.size(0) + 1
     beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T
     beliefs[0], prior_states[0], posterior_states[0] = prev_belief, prev_state, prev_state
+    # print("prev_belief.size(), prev_state.size(), prev_state.size() ",prev_belief.size(), prev_state.size(), prev_state.size())
     # Loop over time sequence
     for t in range(T - 1):
       _state = prior_states[t] if observations is None else posterior_states[t]  # Select appropriate previous state
       _state = _state if nonterminals is None else _state * nonterminals[t]  # Mask if previous transition was terminal
       # Compute belief (deterministic hidden state)
+      # print("model ",torch.cat([_state, actions[t]], dim=1).size())
       hidden = self.act_fn(self.fc_embed_state_action(torch.cat([_state, actions[t]], dim=1)))
       beliefs[t + 1] = self.rnn(hidden, beliefs[t])
       # Compute state prior by applying transition dynamics
@@ -195,15 +203,36 @@ class ActorModel(jit.ScriptModule):
     action_mean, action_std_dev = torch.chunk(action, 2, dim=1)
     action_mean = self._mean_scale * torch.tanh(action_mean / self._mean_scale)
     action_std = F.softplus(action_std_dev + raw_init_std) + self._min_std
-    # dist = Normal(action_mean, action_std)
-    # dist = TanhTransform(dist)
-    # dist = SampleDist(dist)
     return action_mean, action_std
 
+  # @jit.script_method
+  # def forward_dim2(self, belief, state):
+  #   raw_init_std = torch.log(torch.exp(self._init_std) - 1)
+  #   x = torch.cat([belief, state],dim=2)
+  #   print("input fc1", x.size())
+  #   hidden = self.act_fn(self.fc1(x))
+  #   print("input fc2", hidden.size())
+  #   hidden = self.act_fn(self.fc2(hidden))
+  #   print("input fc3", hidden.size())
+  #   hidden = self.act_fn(self.fc3(hidden))
+  #   print("input fc4", hidden.size())
+  #   hidden = self.act_fn(self.fc4(hidden))
+  #   print("input fc5", hidden.size())
+  #   action = self.fc5(hidden).squeeze(dim=1)
+  #   print("output fc5", action.size())
+
+  #   action_mean, action_std_dev = torch.chunk(action, 2, dim=2)
+  #   action_mean = self._mean_scale * torch.tanh(action_mean / self._mean_scale)
+  #   action_std = F.softplus(action_std_dev + raw_init_std) + self._min_std
+  #   return action_mean, action_std
+
   def get_action(self, belief, state, det=False):
+    # x = torch.cat([belief, state],dim=2)
+    # print(x)
     action_mean, action_std = self.forward(belief, state)
     dist = Normal(action_mean, action_std)
-    dist = TanhTransform(dist)
+    dist = TransformedDistribution(dist, TanhTransform())
+    # dist = TanhTransform(dist)
     dist = SampleDist(dist)
     if det: return dist.mode()
     else: return dist.sample()
