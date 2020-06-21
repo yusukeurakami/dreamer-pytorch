@@ -50,8 +50,8 @@ parser.add_argument('--value_learning-rate', type=float, default=8e-5, metavar='
 parser.add_argument('--learning-rate-schedule', type=int, default=0, metavar='αS', help='Linear learning rate schedule (optimisation steps from 0 to final learning rate; 0 to disable)') 
 parser.add_argument('--adam-epsilon', type=float, default=1e-4, metavar='ε', help='Adam optimizer epsilon value') 
 # Note that original has a linear learning rate decay, but it seems unlikely that this makes a significant difference
-parser.add_argument('--grad-clip-norm', type=float, default=1000, metavar='C', help='Gradient clipping norm')
-parser.add_argument('--planning-horizon', type=int, default=12, metavar='H', help='Planning horizon distance')
+parser.add_argument('--grad-clip-norm', type=float, default=100.0, metavar='C', help='Gradient clipping norm')
+parser.add_argument('--planning-horizon', type=int, default=15, metavar='H', help='Planning horizon distance')
 parser.add_argument('--discount', type=float, default=0.99, metavar='H', help='Planning horizon distance')
 parser.add_argument('--disclam', type=float, default=0.95, metavar='H', help='discount rate to compute return')
 parser.add_argument('--optimisation-iters', type=int, default=10, metavar='I', help='Planning optimisation iterations')
@@ -121,6 +121,7 @@ actor_model = ActorModel(args.belief_size, args.state_size, args.hidden_size, en
 value_model = ValueModel(args.belief_size, args.state_size, args.hidden_size, args.dense_activation_function).to(device=args.device)
 #########Dreamer Model End  ###########
 param_list = list(transition_model.parameters()) + list(observation_model.parameters()) + list(reward_model.parameters()) + list(encoder.parameters())
+params_list = param_list + list(actor_model.parameters()) + list(value_model.parameters())
 model_optimizer = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.model_learning_rate, eps=args.adam_epsilon)
 actor_optimizer = optim.Adam(actor_model.parameters(), lr=0 if args.learning_rate_schedule != 0 else args.actor_learning_rate, eps=args.adam_epsilon)
 value_optimizer = optim.Adam(value_model.parameters(), lr=0 if args.learning_rate_schedule != 0 else args.value_learning_rate, eps=args.adam_epsilon)
@@ -255,8 +256,6 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     # print("imagine ahead output", imagination_traj)
     imged_reward = bottle(reward_model, (imged_beliefs, imged_prior_states))
     value_pred = bottle(value_model, (imged_beliefs, imged_prior_states))
-    # print("value prediction output", value_pred.size())
-    # print("return input", imged_reward.size(), value_pred.size()) 
     returns = lambda_return(imged_reward, value_pred, bootstrap=value_pred[-1], discount=args.discount, lambda_=args.disclam)
     # print("return output", returns)
     actor_loss = -torch.mean(returns)
@@ -267,37 +266,39 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     # actor_optimizer.step()
     # # Store (3) actor loss 
     # losses.append([actor_loss.item()])
-
-
-    # Update model parameters
-    model_optimizer.zero_grad()
-    actor_optimizer.zero_grad()
-    (observation_loss + reward_loss + kl_loss).backward()
-    actor_loss.backward()
-    nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
-    model_optimizer.step()
-    actor_optimizer.step()
-    # Store (0) observation loss (1) reward loss (2) KL loss
-    losses.append([observation_loss.item(), reward_loss.item(), kl_loss.item()])
-    # Store (3) actor loss 
-    losses.append([actor_loss.item()])
-    
-    
-
-
+ 
     #Dreamer implementation: value loss calculation and optimization
     # DONE: implement value network.
     # reward_pred = value_model(imagination_traj)
     value_dist = Normal(bottle(reward_model, (imged_beliefs, imged_prior_states)),1)
     target_return = returns.detach()
     value_loss = -value_dist.log_prob(target_return).mean(dim=(0, 1)) 
+    # value_optimizer.zero_grad()
+    # value_loss.backward()
+    # # nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
+    # value_optimizer.step()
+    # # Store (4) value loss
+    # losses.append([value_loss.item()])
+
     # Update model parameters
+    model_optimizer.zero_grad()
+    actor_optimizer.zero_grad()
     value_optimizer.zero_grad()
-    value_loss.backward()
-    # nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
+    (observation_loss + reward_loss + kl_loss + actor_loss + value_loss).backward()
+    # actor_loss.backward()
+    # value_loss.backward()
+    nn.utils.clip_grad_norm_(params_list, args.grad_clip_norm, norm_type=2)
+    # nn.utils.clip_grad_norm_(actor_model.parameters(), args.grad_clip_norm, norm_type=2)
+    # nn.utils.clip_grad_norm_(value_model.parameters(), args.grad_clip_norm, norm_type=2)
+    model_optimizer.step()
+    actor_optimizer.step()
     value_optimizer.step()
-    # Store (4) value loss
-    losses.append([value_loss.item()])
+    # Store (0) observation loss (1) reward loss (2) KL loss (3) actor loss (4) value loss
+    losses.append([observation_loss.item(), reward_loss.item(), kl_loss.item(), actor_loss.item(), value_loss.item()])
+    # # Store (3) actor loss 
+    # losses.append([actor_loss.item()])
+    # # Store (4) value loss
+    # losses.append([value_loss.item()])
 
 
   # Update and plot loss metrics
@@ -347,6 +348,8 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     observation_model.eval()
     reward_model.eval()
     encoder.eval()
+    actor_model.eval()
+    value_model.eval()
     # Initialise parallelised test environments
     test_envs = EnvBatcher(Env, (args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth), {}, args.test_episodes)
     
@@ -380,6 +383,8 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     observation_model.train()
     reward_model.train()
     encoder.train()
+    actor_model.train()
+    value_model.train()
     # Close test environments
     test_envs.close()
 

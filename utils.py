@@ -48,8 +48,8 @@ def imagine_ahead(prev_state, prev_belief, policy, transition_model, planning_ho
           torch.Size([49, 50, 200]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30])
   '''
   flatten = lambda x: x.view([-1]+list(x.size()[2:]))
-  prev_belief = flatten(prev_belief)
-  prev_state = flatten(prev_state)
+  prev_belief = flatten(prev_belief).detach()
+  prev_state = flatten(prev_state).detach()
   
   # Create lists for hidden states (cannot use single tensor as buffer because autograd won't work with inplace writes)
   T = planning_horizon
