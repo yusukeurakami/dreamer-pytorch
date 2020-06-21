@@ -56,18 +56,13 @@ def imagine_ahead(prev_state, prev_belief, policy, transition_model, planning_ho
   beliefs, prior_states, prior_means, prior_std_devs = [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T
   beliefs[0], prior_states[0] = prev_belief, prev_state
 
-  # flatten = lambda x: tf.reshape(x, [-1] + list(x.shape[2:]))
-  # start = {k: flatten(v) for k, v in post.items()}
-
-
   # Loop over time sequence
   for t in range(T - 1):
     _state = prior_states[t]
     # print(beliefs[t], _state)
     actions = policy.get_action(beliefs[t],_state)
+    # print("action size inside the imagine_ahead: ",actions.size())
     # Compute belief (deterministic hidden state)
-    # act_fn_inp = torch.cat([_state, actions], dim=1)
-    # print("imagine", act_fn_inp.size())
     hidden = transition_model.act_fn(transition_model.fc_embed_state_action(torch.cat([_state, actions], dim=1)))
     beliefs[t + 1] = transition_model.rnn(hidden, beliefs[t])
     # Compute state prior by applying transition dynamics

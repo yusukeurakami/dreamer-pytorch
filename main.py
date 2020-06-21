@@ -134,8 +134,9 @@ if args.models is not '' and os.path.exists(args.models):
   actor_model.load_state_dict(model_dicts['actor_model'])
   value_model.load_state_dict(model_dicts['value_model'])
   model_optimizer.load_state_dict(model_dicts['model_optimizer'])
-# TODO: Implement dreamer-planner
-planner = MPCPlanner(env.action_size, args.planning_horizon, args.optimisation_iters, args.candidates, args.top_candidates, transition_model, reward_model)
+# DONE: Implement dreamer-planner
+planner = actor_model
+# planner = MPCPlanner(env.action_size, args.planning_horizon, args.optimisation_iters, args.candidates, args.top_candidates, transition_model, reward_model)
 global_prior = Normal(torch.zeros(args.batch_size, args.state_size, device=args.device), torch.ones(args.batch_size, args.state_size, device=args.device))  # Global prior N(0, I)
 free_nats = torch.full((1, ), args.free_nats, device=args.device)  # Allowed deviation in KL divergence
 
@@ -145,10 +146,12 @@ def update_belief_and_act(args, env, planner, transition_model, encoder, belief,
   # print("action size: ",action.size()) torch.Size([1, 6])
   belief, _, _, _, posterior_state, _, _ = transition_model(posterior_state, action.unsqueeze(dim=0), belief, encoder(observation).unsqueeze(dim=0))  # Action and observation need extra time dimension
   belief, posterior_state = belief.squeeze(dim=0), posterior_state.squeeze(dim=0)  # Remove time dimension from belief/state
-  # TODO replace planner with the policy
-  action = planner(belief, posterior_state)  # Get action from planner(q(s_t|o≤t,a<t), p)
+  # DONE replace planner with the policy
+  # action = planner(belief, posterior_state)  # Get action from planner(q(s_t|o≤t,a<t), p)
+  action = planner.get_action(belief, posterior_state, det=not(explore))
   if explore:
-    action = action + args.action_noise * torch.randn_like(action)  # Add exploration noise ε ~ p(ε) to the action
+    action = torch.clamp(Normal(action, args.action_noise).sample(), -1, 1) # Add gaussian exploration noise on top of the sampled action
+    # action = action + args.action_noise * torch.randn_like(action)  # Add exploration noise ε ~ p(ε) to the action
   next_observation, reward, done = env.step(action.cpu() if isinstance(env, EnvBatcher) else action[0].cpu())  # Perform environment step (action repeats handled internally)
   return belief, posterior_state, action, next_observation, reward, done
 
@@ -234,22 +237,11 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
       for group in model_optimizer.param_groups:
         group['lr'] = min(group['lr'] + args.model_learning_rate / args.model_learning_rate_schedule, args.model_learning_rate)
 
-    # # Update model parameters
-    # model_optimizer.zero_grad()
-    # (observation_loss + reward_loss + kl_loss).backward()
-    # nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
-    # model_optimizer.step()
-    # # Store (0) observation loss (1) reward loss (2) KL loss
-    # losses.append([observation_loss.item(), reward_loss.item(), kl_loss.item()])
-
-
     #Dreamer implementation: actor loss calculation and optimization
     # DONE: implement actor network
     # DONE: implement imagine_ahead function
     # DONE: implement imagine_reward function
     # DONE: implement lambda_return function
-    # init_belief, init_state = torch.zeros(args.batch_size, args.belief_size, device=args.device), torch.zeros(args.batch_size, args.state_size, device=args.device)
-    # print("imagine ahead")
     # print("post: ", init_state)
     imagination_traj = imagine_ahead(posterior_states, beliefs, actor_model, transition_model, args.planning_horizon)
     imged_beliefs, imged_prior_states, imged_prior_means, imged_prior_std_devs = imagination_traj
@@ -259,46 +251,24 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     returns = lambda_return(imged_reward, value_pred, bootstrap=value_pred[-1], discount=args.discount, lambda_=args.disclam)
     # print("return output", returns)
     actor_loss = -torch.mean(returns)
-    # # # Update model parameters
-    # actor_optimizer.zero_grad()
-    # actor_loss.backward()
-    # # nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
-    # actor_optimizer.step()
-    # # Store (3) actor loss 
-    # losses.append([actor_loss.item()])
  
     #Dreamer implementation: value loss calculation and optimization
     # DONE: implement value network.
-    # reward_pred = value_model(imagination_traj)
     value_dist = Normal(bottle(reward_model, (imged_beliefs, imged_prior_states)),1)
     target_return = returns.detach()
     value_loss = -value_dist.log_prob(target_return).mean(dim=(0, 1)) 
-    # value_optimizer.zero_grad()
-    # value_loss.backward()
-    # # nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
-    # value_optimizer.step()
-    # # Store (4) value loss
-    # losses.append([value_loss.item()])
 
     # Update model parameters
     model_optimizer.zero_grad()
     actor_optimizer.zero_grad()
     value_optimizer.zero_grad()
     (observation_loss + reward_loss + kl_loss + actor_loss + value_loss).backward()
-    # actor_loss.backward()
-    # value_loss.backward()
     nn.utils.clip_grad_norm_(params_list, args.grad_clip_norm, norm_type=2)
-    # nn.utils.clip_grad_norm_(actor_model.parameters(), args.grad_clip_norm, norm_type=2)
-    # nn.utils.clip_grad_norm_(value_model.parameters(), args.grad_clip_norm, norm_type=2)
     model_optimizer.step()
     actor_optimizer.step()
     value_optimizer.step()
     # Store (0) observation loss (1) reward loss (2) KL loss (3) actor loss (4) value loss
     losses.append([observation_loss.item(), reward_loss.item(), kl_loss.item(), actor_loss.item(), value_loss.item()])
-    # # Store (3) actor loss 
-    # losses.append([actor_loss.item()])
-    # # Store (4) value loss
-    # losses.append([value_loss.item()])
 
 
   # Update and plot loss metrics

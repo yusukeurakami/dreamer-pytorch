@@ -205,34 +205,10 @@ class ActorModel(jit.ScriptModule):
     action_std = F.softplus(action_std_dev + raw_init_std) + self._min_std
     return action_mean, action_std
 
-  # @jit.script_method
-  # def forward_dim2(self, belief, state):
-  #   raw_init_std = torch.log(torch.exp(self._init_std) - 1)
-  #   x = torch.cat([belief, state],dim=2)
-  #   print("input fc1", x.size())
-  #   hidden = self.act_fn(self.fc1(x))
-  #   print("input fc2", hidden.size())
-  #   hidden = self.act_fn(self.fc2(hidden))
-  #   print("input fc3", hidden.size())
-  #   hidden = self.act_fn(self.fc3(hidden))
-  #   print("input fc4", hidden.size())
-  #   hidden = self.act_fn(self.fc4(hidden))
-  #   print("input fc5", hidden.size())
-  #   action = self.fc5(hidden).squeeze(dim=1)
-  #   print("output fc5", action.size())
-
-  #   action_mean, action_std_dev = torch.chunk(action, 2, dim=2)
-  #   action_mean = self._mean_scale * torch.tanh(action_mean / self._mean_scale)
-  #   action_std = F.softplus(action_std_dev + raw_init_std) + self._min_std
-  #   return action_mean, action_std
-
   def get_action(self, belief, state, det=False):
-    # x = torch.cat([belief, state],dim=2)
-    # print(x)
     action_mean, action_std = self.forward(belief, state)
     dist = Normal(action_mean, action_std)
     dist = TransformedDistribution(dist, TanhTransform())
-    # dist = TanhTransform(dist)
     dist = SampleDist(dist)
     if det: return dist.mode()
     else: return dist.sample()
@@ -301,16 +277,16 @@ class SampleDist:
     return torch.mean(samples,0)
 
   def mode(self):
-    sample = self._dist.sample(self._samples)
-    print("sample: ", sample.size())
+    sample = self._dist.sample_n(self._samples)
+    # print("sample: ", sample.size()) # torch.Size([100, 1, 6])
     logprob = self._dist.log_prob(sample)
-    print("logprob: ",logprob.size())
-    # still not sure how the following parts work
+    logprob = logprob.sum(2) # needed since the log_prob works differently from tensorflow.
+    # print("logprob: ",logprob.size()) #torch.Size([100, 1]) 
     logprob_argmax = torch.argmax(logprob,0)
-    print("logprob argmax:", logprob_argmax.size())
+    # print("logprob argmax:", logprob_argmax.size()) # torch.Size([1]) --> have to be [1]
     sample = sample[logprob_argmax]
-    print("sample selected: ",sample.size())
-    return sample
+    # print("sample selected: ",sample.size()) #torch.Size([1, 1, 6]) --> have to be [1, 1, 6]
+    return sample[0]
 
   def entropy(self):
     sample = self._dist.sample(self._samples)
