@@ -346,7 +346,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     # Set models to eval mode
     transition_model.eval()
     observation_model.eval()
-    reward_model.eval()
+    reward_model.eval() 
     encoder.eval()
     actor_model.eval()
     value_model.eval()
