@@ -28,7 +28,7 @@ parser.add_argument('--experience-size', type=int, default=1000000, metavar='D',
 parser.add_argument('--cnn-activation-function', type=str, default='relu', choices=dir(F), help='Model activation function for a convolution layer')
 parser.add_argument('--dense-activation-function', type=str, default='elu', choices=dir(F), help='Model activation function a dense layer')
 parser.add_argument('--embedding-size', type=int, default=1024, metavar='E', help='Observation embedding size')  # Note that the default encoder for visual observations outputs a 1024D vector; for other embedding sizes an additional fully-connected layer is used
-parser.add_argument('--hidden-size', type=int, default=400, metavar='H', help='Hidden size')
+parser.add_argument('--hidden-size', type=int, default=200, metavar='H', help='Hidden size')
 parser.add_argument('--belief-size', type=int, default=200, metavar='H', help='Belief/hidden size')
 parser.add_argument('--state-size', type=int, default=30, metavar='Z', help='State/latent size')
 parser.add_argument('--action-repeat', type=int, default=2, metavar='R', help='Action repeat')
@@ -44,7 +44,7 @@ parser.add_argument('--overshooting-reward-scale', type=float, default=0, metava
 parser.add_argument('--global-kl-beta', type=float, default=0, metavar='βg', help='Global KL weight (0 to disable)')
 parser.add_argument('--free-nats', type=float, default=3, metavar='F', help='Free nats')
 parser.add_argument('--bit-depth', type=int, default=5, metavar='B', help='Image bit depth (quantisation)')
-parser.add_argument('--model_learning-rate', type=float, default=4e-6, metavar='α', help='Learning rate') 
+parser.add_argument('--model_learning-rate', type=float, default=1e-3, metavar='α', help='Learning rate') 
 parser.add_argument('--actor_learning-rate', type=float, default=8e-5, metavar='α', help='Learning rate') 
 parser.add_argument('--value_learning-rate', type=float, default=8e-5, metavar='α', help='Learning rate') 
 parser.add_argument('--learning-rate-schedule', type=int, default=0, metavar='αS', help='Linear learning rate schedule (optimisation steps from 0 to final learning rate; 0 to disable)') 
@@ -121,7 +121,7 @@ actor_model = ActorModel(args.belief_size, args.state_size, args.hidden_size, en
 value_model = ValueModel(args.belief_size, args.state_size, args.hidden_size, args.dense_activation_function).to(device=args.device)
 #########Dreamer Model End  ###########
 param_list = list(transition_model.parameters()) + list(observation_model.parameters()) + list(reward_model.parameters()) + list(encoder.parameters())
-params_list = param_list + list(actor_model.parameters()) + list(value_model.parameters())
+params_list = param_list  + list(value_model.parameters()) #+ list(actor_model.parameters())
 model_optimizer = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.model_learning_rate, eps=args.adam_epsilon)
 actor_optimizer = optim.Adam(actor_model.parameters(), lr=0 if args.learning_rate_schedule != 0 else args.actor_learning_rate, eps=args.adam_epsilon)
 value_optimizer = optim.Adam(value_model.parameters(), lr=0 if args.learning_rate_schedule != 0 else args.value_learning_rate, eps=args.adam_epsilon)
@@ -254,21 +254,21 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
  
     #Dreamer implementation: value loss calculation and optimization
     # DONE: implement value network.
-    value_dist = Normal(bottle(reward_model, (imged_beliefs, imged_prior_states)),1)
+    value_dist = Normal(bottle(reward_model, (imged_beliefs.detach(), imged_prior_states.detach())),1)
     target_return = returns.detach()
     value_loss = -value_dist.log_prob(target_return).mean(dim=(0, 1)) 
 
     # Update model parameters
     model_optimizer.zero_grad()
     # actor_optimizer.zero_grad()
-    # value_optimizer.zero_grad()
+    value_optimizer.zero_grad()
     # (observation_loss + reward_loss + kl_loss + actor_loss + value_loss).backward()
-    (observation_loss + reward_loss + kl_loss).backward()
-    # nn.utils.clip_grad_norm_(params_list, args.grad_clip_norm, norm_type=2)
-    nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
+    (observation_loss + reward_loss + kl_loss + value_loss).backward()
+    nn.utils.clip_grad_norm_(params_list, args.grad_clip_norm, norm_type=2)
+    # nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
     model_optimizer.step()
     # actor_optimizer.step()
-    # value_optimizer.step()
+    value_optimizer.step()
     # Store (0) observation loss (1) reward loss (2) KL loss (3) actor loss (4) value loss
     losses.append([observation_loss.item(), reward_loss.item(), kl_loss.item(), actor_loss.item(), value_loss.item()])
 
