@@ -28,7 +28,7 @@ parser.add_argument('--experience-size', type=int, default=1000000, metavar='D',
 parser.add_argument('--cnn-activation-function', type=str, default='relu', choices=dir(F), help='Model activation function for a convolution layer')
 parser.add_argument('--dense-activation-function', type=str, default='elu', choices=dir(F), help='Model activation function a dense layer')
 parser.add_argument('--embedding-size', type=int, default=1024, metavar='E', help='Observation embedding size')  # Note that the default encoder for visual observations outputs a 1024D vector; for other embedding sizes an additional fully-connected layer is used
-parser.add_argument('--hidden-size', type=int, default=400, metavar='H', help='Hidden size')
+parser.add_argument('--hidden-size', type=int, default=200, metavar='H', help='Hidden size')
 parser.add_argument('--belief-size', type=int, default=200, metavar='H', help='Belief/hidden size')
 parser.add_argument('--state-size', type=int, default=30, metavar='Z', help='State/latent size')
 parser.add_argument('--action-repeat', type=int, default=2, metavar='R', help='Action repeat')
@@ -44,7 +44,7 @@ parser.add_argument('--overshooting-reward-scale', type=float, default=0, metava
 parser.add_argument('--global-kl-beta', type=float, default=0, metavar='βg', help='Global KL weight (0 to disable)')
 parser.add_argument('--free-nats', type=float, default=3, metavar='F', help='Free nats')
 parser.add_argument('--bit-depth', type=int, default=5, metavar='B', help='Image bit depth (quantisation)')
-parser.add_argument('--model_learning-rate', type=float, default=6e-4, metavar='α', help='Learning rate') 
+parser.add_argument('--model_learning-rate', type=float, default=1e-3, metavar='α', help='Learning rate') 
 parser.add_argument('--actor_learning-rate', type=float, default=8e-5, metavar='α', help='Learning rate') 
 parser.add_argument('--value_learning-rate', type=float, default=8e-5, metavar='α', help='Learning rate') 
 parser.add_argument('--learning-rate-schedule', type=int, default=0, metavar='αS', help='Linear learning rate schedule (optimisation steps from 0 to final learning rate; 0 to disable)') 
@@ -54,9 +54,9 @@ parser.add_argument('--grad-clip-norm', type=float, default=100.0, metavar='C', 
 parser.add_argument('--planning-horizon', type=int, default=15, metavar='H', help='Planning horizon distance')
 parser.add_argument('--discount', type=float, default=0.99, metavar='H', help='Planning horizon distance')
 parser.add_argument('--disclam', type=float, default=0.95, metavar='H', help='discount rate to compute return')
-# parser.add_argument('--optimisation-iters', type=int, default=10, metavar='I', help='Planning optimisation iterations')
-# parser.add_argument('--candidates', type=int, default=1000, metavar='J', help='Candidate samples per iteration')
-# parser.add_argument('--top-candidates', type=int, default=100, metavar='K', help='Number of top candidates to fit')
+parser.add_argument('--optimisation-iters', type=int, default=10, metavar='I', help='Planning optimisation iterations')
+parser.add_argument('--candidates', type=int, default=1000, metavar='J', help='Candidate samples per iteration')
+parser.add_argument('--top-candidates', type=int, default=100, metavar='K', help='Number of top candidates to fit')
 parser.add_argument('--test', action='store_true', help='Test only')
 parser.add_argument('--test-interval', type=int, default=25, metavar='I', help='Test interval (episodes)')
 parser.add_argument('--test-episodes', type=int, default=10, metavar='E', help='Number of test episodes')
@@ -135,8 +135,8 @@ if args.models is not '' and os.path.exists(args.models):
   value_model.load_state_dict(model_dicts['value_model'])
   model_optimizer.load_state_dict(model_dicts['model_optimizer'])
 # DONE: Implement dreamer-planner
-planner = actor_model
-# planner = MPCPlanner(env.action_size, args.planning_horizon, args.optimisation_iters, args.candidates, args.top_candidates, transition_model, reward_model)
+# planner = actor_model
+planner = MPCPlanner(env.action_size, args.planning_horizon, args.optimisation_iters, args.candidates, args.top_candidates, transition_model, reward_model)
 global_prior = Normal(torch.zeros(args.batch_size, args.state_size, device=args.device), torch.ones(args.batch_size, args.state_size, device=args.device))  # Global prior N(0, I)
 free_nats = torch.full((1, ), args.free_nats, device=args.device)  # Allowed deviation in KL divergence
 
@@ -147,8 +147,8 @@ def update_belief_and_act(args, env, planner, transition_model, encoder, belief,
   belief, _, _, _, posterior_state, _, _ = transition_model(posterior_state, action.unsqueeze(dim=0), belief, encoder(observation).unsqueeze(dim=0))  # Action and observation need extra time dimension
   belief, posterior_state = belief.squeeze(dim=0), posterior_state.squeeze(dim=0)  # Remove time dimension from belief/state
   # DONE replace planner with the policy
-  # action = planner(belief, posterior_state)  # Get action from planner(q(s_t|o≤t,a<t), p)
-  action = planner.get_action(belief, posterior_state, det=not(explore))
+  action = planner(belief, posterior_state)  # Get action from planner(q(s_t|o≤t,a<t), p)
+  # action = planner.get_action(belief, posterior_state, det=not(explore))
   if explore:
     action = torch.clamp(Normal(action, args.action_noise).sample(), -1, 1) # Add gaussian exploration noise on top of the sampled action
     # action = action + args.action_noise * torch.randn_like(action)  # Add exploration noise ε ~ p(ε) to the action
@@ -200,14 +200,14 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     #(49,50,200), (49,50,30), (49,50,30), (49,50,30), (49,50,30), (49,50,30), (49,50,30)
     # Calculate observation likelihood, reward likelihood and KL losses (for t = 0 only for latent overshooting); sum over final dims, average over batch and time (original implementation, though paper seems to miss 1/T scaling?)
     ### DONE: change MSE loss to log_prob loss: reconstruction loss
-    observation_dist = Normal(bottle(observation_model, (beliefs, posterior_states)), 1)
-    observation_loss = -observation_dist.log_prob(observations[1:]).sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
-    # observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
+    # observation_dist = Normal(bottle(observation_model, (beliefs, posterior_states)), 1)
+    # observation_loss = -observation_dist.log_prob(observations[1:]).sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
+    observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
     # print(observation_loss.size(), observation_loss) # entropy -11802.2715, #MSE [], 1020.7104
     ### DONE: change MSE loss to log_prob loss: reward loss
-    reward_dist = Normal(bottle(reward_model, (beliefs, posterior_states)),1)
-    reward_loss = -reward_dist.log_prob(rewards[:-1]).mean(dim=(0, 1))
-    # reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards[:-1], reduction='none').mean(dim=(0, 1))
+    # reward_dist = Normal(bottle(reward_model, (beliefs, posterior_states)),1)
+    # reward_loss = -reward_dist.log_prob(rewards[:-1]).mean(dim=(0, 1))
+    reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards[:-1], reduction='none').mean(dim=(0, 1))
     # print(reward_loss.size(), reward_loss) # entropy [] ,-0.9309 #MSE [], 0.0239
     # transition loss
     kl_loss = torch.max(kl_divergence(Normal(posterior_means, posterior_std_devs), Normal(prior_means, prior_std_devs)).sum(dim=2), free_nats).mean(dim=(0, 1))  # Note that normalisation by overshooting distance and weighting by overshooting distance cancel out
@@ -229,7 +229,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
       # Calculate overshooting KL loss with sequence mask
       kl_loss += (1 / args.overshooting_distance) * args.overshooting_kl_beta * torch.max((kl_divergence(Normal(torch.cat(overshooting_vars[5], dim=1), torch.cat(overshooting_vars[6], dim=1)), Normal(prior_means, prior_std_devs)) * seq_mask).sum(dim=2), free_nats).mean(dim=(0, 1)) * (args.chunk_size - 1)  # Update KL loss (compensating for extra average over each overshooting/open loop sequence) 
       # Calculate overshooting reward prediction loss with sequence mask
-      if args.overshooting_reward_scale != 0:
+      if args.overshooting_reward_scale != 0: 
         reward_loss += (1 / args.overshooting_distance) * args.overshooting_reward_scale * F.mse_loss(bottle(reward_model, (beliefs, prior_states)) * seq_mask[:, :, 0], torch.cat(overshooting_vars[2], dim=1), reduction='none').mean(dim=(0, 1)) * (args.chunk_size - 1)  # Update reward loss (compensating for extra average over each overshooting/open loop sequence) 
 
     # Apply linearly ramping learning rate schedule
@@ -260,13 +260,15 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
 
     # Update model parameters
     model_optimizer.zero_grad()
-    actor_optimizer.zero_grad()
-    value_optimizer.zero_grad()
-    (observation_loss + reward_loss + kl_loss + actor_loss + value_loss).backward()
-    nn.utils.clip_grad_norm_(params_list, args.grad_clip_norm, norm_type=2)
+    # actor_optimizer.zero_grad()
+    # value_optimizer.zero_grad()
+    # (observation_loss + reward_loss + kl_loss + actor_loss + value_loss).backward()
+    (observation_loss + reward_loss + kl_loss).backward()
+    # nn.utils.clip_grad_norm_(params_list, args.grad_clip_norm, norm_type=2)
+    nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
     model_optimizer.step()
-    actor_optimizer.step()
-    value_optimizer.step()
+    # actor_optimizer.step()
+    # value_optimizer.step()
     # Store (0) observation loss (1) reward loss (2) KL loss (3) actor loss (4) value loss
     losses.append([observation_loss.item(), reward_loss.item(), kl_loss.item(), actor_loss.item(), value_loss.item()])
 
