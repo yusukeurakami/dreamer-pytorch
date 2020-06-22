@@ -56,6 +56,7 @@ def imagine_ahead(prev_state, prev_belief, policy, transition_model, planning_ho
   beliefs, prior_states, prior_means, prior_std_devs = [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T
   beliefs[0], prior_states[0] = prev_belief, prev_state
 
+  transition_model.eval()#### added to make sure that the gradient does not backprop through when we train actor_model
   # Loop over time sequence
   for t in range(T - 1):
     _state = prior_states[t]
@@ -63,6 +64,7 @@ def imagine_ahead(prev_state, prev_belief, policy, transition_model, planning_ho
     actions = policy.get_action(beliefs[t],_state)
     # print("action size inside the imagine_ahead: ",actions.size())
     # Compute belief (deterministic hidden state)
+
     hidden = transition_model.act_fn(transition_model.fc_embed_state_action(torch.cat([_state, actions], dim=1)))
     beliefs[t + 1] = transition_model.rnn(hidden, beliefs[t])
     # Compute state prior by applying transition dynamics
@@ -70,6 +72,7 @@ def imagine_ahead(prev_state, prev_belief, policy, transition_model, planning_ho
     prior_means[t + 1], _prior_std_dev = torch.chunk(transition_model.fc_state_prior(hidden), 2, dim=1)
     prior_std_devs[t + 1] = F.softplus(_prior_std_dev) + transition_model.min_std_dev
     prior_states[t + 1] = prior_means[t + 1] + prior_std_devs[t + 1] * torch.randn_like(prior_means[t + 1])     
+  transition_model.train()#### reactivate the training mode of actor_model
   # Return new hidden states
   # imagined_traj = [beliefs, prior_states, prior_means, prior_std_devs]
   imagined_traj = [torch.stack(beliefs[1:], dim=0), torch.stack(prior_states[1:], dim=0), torch.stack(prior_means[1:], dim=0), torch.stack(prior_std_devs[1:], dim=0)]
