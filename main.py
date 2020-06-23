@@ -125,9 +125,10 @@ param_list = list(transition_model.parameters()) + list(observation_model.parame
 value_actor_param_list = list(value_model.parameters()) + list(actor_model.parameters())
 params_list = param_list + value_actor_param_list
 model_optimizer = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.model_learning_rate, eps=args.adam_epsilon)
-actor_optimizer = optim.Adam(actor_model.parameters(), lr=0 if args.learning_rate_schedule != 0 else args.actor_learning_rate, eps=args.adam_epsilon)
-# actor_optimizer = optim.Adam([{"params":actor_model.parameters(), "lr":0 if args.learning_rate_schedule != 0 else args.actor_learning_rate, "eps":args.adam_epsilon},
-#                               {"params":param_list, "lr":0}])
+# actor_optimizer = optim.Adam(actor_model.parameters(), lr=0 if args.learning_rate_schedule != 0 else args.actor_learning_rate, eps=args.adam_epsilon)
+actor_optimizer = optim.Adam([{"params":actor_model.parameters(), "lr":0 if args.learning_rate_schedule != 0 else args.actor_learning_rate, "eps":args.adam_epsilon},
+                              {"params":param_list, "lr":0},
+                              {"params":value_model.parameters(), "lr":0}])
 value_optimizer = optim.Adam(value_model.parameters(), lr=0 if args.learning_rate_schedule != 0 else args.value_learning_rate, eps=args.adam_epsilon)
 if args.models is not '' and os.path.exists(args.models):
   model_dicts = torch.load(args.models)
@@ -252,12 +253,12 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     with torch.no_grad():
       actor_states = posterior_states.detach()
       actor_beliefs = beliefs.detach()
-    with FreezeParameters(model_modules):
-      imagination_traj = imagine_ahead(actor_states, actor_beliefs, actor_model, transition_model, args.planning_horizon)
+    # with FreezeParameters(model_modules):
+    imagination_traj = imagine_ahead(actor_states, actor_beliefs, actor_model, transition_model, args.planning_horizon)
     imged_beliefs, imged_prior_states, imged_prior_means, imged_prior_std_devs = imagination_traj
-    with FreezeParameters(model_modules + value_model.modules):
-      imged_reward = bottle(reward_model, (imged_beliefs, imged_prior_states))
-      value_pred = bottle(value_model, (imged_beliefs, imged_prior_states))
+    # with FreezeParameters(model_modules + value_model.modules):
+    imged_reward = bottle(reward_model, (imged_beliefs, imged_prior_states))
+    value_pred = bottle(value_model, (imged_beliefs, imged_prior_states))
     returns = lambda_return(imged_reward, value_pred, bootstrap=value_pred[-1], discount=args.discount, lambda_=args.disclam)
     actor_loss = -torch.mean(returns)
  
@@ -274,10 +275,10 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     model_optimizer.zero_grad()
     actor_optimizer.zero_grad()
     value_optimizer.zero_grad()
-    (model_loss + actor_loss + value_loss).backward()
-    # model_loss.backward()
-    # value_loss.backward()
-    # actor_loss.backward()
+    # (model_loss + actor_loss + value_loss).backward()
+    model_loss.backward()
+    actor_loss.backward()
+    value_loss.backward()
     nn.utils.clip_grad_norm_(params_list, args.grad_clip_norm, norm_type=2)
     # nn.utils.clip_grad_norm_(value_param_list, args.grad_clip_norm, norm_type=2)
     model_optimizer.step()
