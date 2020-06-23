@@ -50,9 +50,9 @@ def imagine_ahead(prev_state, prev_belief, policy, transition_model, planning_ho
           torch.Size([49, 50, 200]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30])
   '''
   flatten = lambda x: x.view([-1]+list(x.size()[2:]))
-  with torch.no_grad(): # Delete the gradient from transition_model
-    prev_belief = flatten(prev_belief)
-    prev_state = flatten(prev_state)
+  # with torch.no_grad(): # Delete the gradient from transition_model
+  prev_belief = flatten(prev_belief)
+  prev_state = flatten(prev_state)
   
   # Create lists for hidden states (cannot use single tensor as buffer because autograd won't work with inplace writes)
   T = planning_horizon
@@ -68,6 +68,7 @@ def imagine_ahead(prev_state, prev_belief, policy, transition_model, planning_ho
     # print("action size inside the imagine_ahead: ",actions.size())
     # Compute belief (deterministic hidden state)
 
+    # with FreezeParameters(transition_model.modules):
     hidden = transition_model.act_fn(transition_model.fc_embed_state_action(torch.cat([_state, actions], dim=1)))
     beliefs[t + 1] = transition_model.rnn(hidden, beliefs[t])
     # Compute state prior by applying transition dynamics
