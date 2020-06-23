@@ -1,8 +1,35 @@
-from utils import lambda_return    
+from utils import lambda_return, FreezeParameters
 import torch
 from torch.distributions.normal import Normal
 from torch.distributions.transformed_distribution import TransformedDistribution
 from torch.distributions.transforms import Transform, TanhTransform
+from torch.nn import functional as F
+
+transition_model = torch.nn.Linear(20, 10)
+value_model = torch.nn.Linear(10, 2)
+
+with FreezeParameters([value_model]):
+    inp1 = torch.ones(20)
+    returns = torch.zeros(2)
+    inp2 = transition_model(inp1)
+    value_pred = value_model(inp2)
+    target_return = returns.detach()
+    transition_loss = F.mse_loss(value_pred, target_return).mean(dim=(0))
+
+with FreezeParameters([transition_model]):
+    inp1 = torch.ones(20)
+    returns = torch.zeros(2)
+    inp2 = transition_model(inp1)
+    value_pred = value_model(inp2)
+    target_return = returns.detach()
+    value_loss = F.mse_loss(value_pred, target_return).mean(dim=(0))
+
+transition_loss.backward()
+print(transition_model.weight.grad)
+print(value_model.weight.grad)
+value_loss.backward()
+print(transition_model.weight.grad)
+print(value_model.weight.grad)
 
 
 # disclam = 0.95
@@ -27,32 +54,32 @@ from torch.distributions.transforms import Transform, TanhTransform
 # [57.93975  60.860844 63.781944 66.70304  69.62414  72.54523  75.466324, 78.38741  81.30851  84.22961 ]
 # [59.5   , 61.489998 63.480003 65.47     67.46001  69.45     71.44 73.43     75.42     77.41    ]]
 
-mean = torch.zeros((3,4))
-std = torch.ones((3,4))
-dist = Normal(mean, std)
-dist = TransformedDistribution(dist, TanhTransform())
-# sample = dist.sample_n(2)
-# print("sample: ", sample) # torch.Size([100, 1, 6])
+# mean = torch.zeros((3,4))
+# std = torch.ones((3,4))
+# dist = Normal(mean, std)
+# dist = TransformedDistribution(dist, TanhTransform())
+# # sample = dist.sample_n(2)
+# # print("sample: ", sample) # torch.Size([100, 1, 6])
 
 
-sample = torch.Tensor([[[ 0.5467947,  -0.1615259,   0.85917974,  0.8844119 ],
-                        [ 0.9430844,  -0.65128314, -0.37722188, -0.7573055 ],
-                        [ 0.97344655,  0.23397793, -0.5207381,  -0.8949507 ]],
+# sample = torch.Tensor([[[ 0.5467947,  -0.1615259,   0.85917974,  0.8844119 ],
+#                         [ 0.9430844,  -0.65128314, -0.37722188, -0.7573055 ],
+#                         [ 0.97344655,  0.23397793, -0.5207381,  -0.8949507 ]],
 
-                        [[-0.02690708,  0.93916935, -0.7454547,   0.54994726],
-                        [-0.8515325,  -0.87329435,  0.5729679,  -0.7884654 ],
-                        [-0.4692143,  -0.7107713,  -0.4622952,   0.73246235]]])
+#                         [[-0.02690708,  0.93916935, -0.7454547,   0.54994726],
+#                         [-0.8515325,  -0.87329435,  0.5729679,  -0.7884654 ],
+#                         [-0.4692143,  -0.7107713,  -0.4622952,   0.73246235]]])
 
-print(sample)
+# print(sample)
 
-logprob = dist.log_prob(sample)
-print("logprob: ",logprob)
-logprob = logprob.sum(2)
-print("logprob: ",logprob.size())
-print("logprob: ",logprob)
-# still not sure how the following parts work
-logprob_argmax = torch.argmax(logprob,0)
-# print("logprob argmax:", logprob_argmax) # torch.Size([1, 6])
-sample = sample[logprob_argmax]
-# print("sample selected: ",sample) #torch.Size([1, 6, 1, 6]) --> have to be [1, 6]
-print("return:", sample[0])
+# logprob = dist.log_prob(sample)
+# print("logprob: ",logprob)
+# logprob = logprob.sum(2)
+# print("logprob: ",logprob.size())
+# print("logprob: ",logprob)
+# # still not sure how the following parts work
+# logprob_argmax = torch.argmax(logprob,0)
+# # print("logprob argmax:", logprob_argmax) # torch.Size([1, 6])
+# sample = sample[logprob_argmax]
+# # print("sample selected: ",sample) #torch.Size([1, 6, 1, 6]) --> have to be [1, 6]
+# print("return:", sample[0])
