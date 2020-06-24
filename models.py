@@ -37,7 +37,7 @@ class TransitionModel(jit.ScriptModule):
     self.fc_state_prior = nn.Linear(hidden_size, 2 * state_size)
     self.fc_embed_belief_posterior = nn.Linear(belief_size + embedding_size, hidden_size)
     self.fc_state_posterior = nn.Linear(hidden_size, 2 * state_size)
-    self.modules = [self.fc_embed_state_action, self.rnn, self.fc_embed_belief_prior, self.fc_state_prior, self.fc_embed_belief_posterior, self.fc_state_posterior]
+    self.modules = [self.fc_embed_state_action, self.fc_embed_belief_prior, self.fc_state_prior, self.fc_embed_belief_posterior, self.fc_state_posterior]
 
   # Operates over (previous) state, (previous) actions, (previous) belief, (previous) nonterminals (mask), and (current) observations
   # Diagram of expected inputs and outputs for T = 5 (-x- signifying beginning of output belief/state that gets sliced off):
@@ -248,7 +248,7 @@ class VisualEncoder(jit.ScriptModule):
     self.conv3 = nn.Conv2d(64, 128, 4, stride=2)
     self.conv4 = nn.Conv2d(128, 256, 4, stride=2)
     self.fc = nn.Identity() if embedding_size == 1024 else nn.Linear(1024, embedding_size)
-    self.modules = [self.conv1, self.conv2, self.conv3, self.conv4, self.fc]
+    self.modules = [self.conv1, self.conv2, self.conv3, self.conv4]
 
   @jit.script_method
   def forward(self, observation):

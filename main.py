@@ -125,10 +125,10 @@ param_list = list(transition_model.parameters()) + list(observation_model.parame
 value_actor_param_list = list(value_model.parameters()) + list(actor_model.parameters())
 params_list = param_list + value_actor_param_list
 model_optimizer = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.model_learning_rate, eps=args.adam_epsilon)
-# actor_optimizer = optim.Adam(actor_model.parameters(), lr=0 if args.learning_rate_schedule != 0 else args.actor_learning_rate, eps=args.adam_epsilon)
-actor_optimizer = optim.Adam([{"params":actor_model.parameters(), "lr":0 if args.learning_rate_schedule != 0 else args.actor_learning_rate, "eps":args.adam_epsilon},
-                              {"params":param_list, "lr":0},
-                              {"params":value_model.parameters(), "lr":0}])
+actor_optimizer = optim.Adam(actor_model.parameters(), lr=0 if args.learning_rate_schedule != 0 else args.actor_learning_rate, eps=args.adam_epsilon)
+# actor_optimizer = optim.Adam([{"params":actor_model.parameters(), "lr":0 if args.learning_rate_schedule != 0 else args.actor_learning_rate, "eps":args.adam_epsilon},
+#                               {"params":param_list, "lr":0},
+#                               {"params":value_model.parameters(), "lr":0}])
 value_optimizer = optim.Adam(value_model.parameters(), lr=0 if args.learning_rate_schedule != 0 else args.value_learning_rate, eps=args.adam_epsilon)
 if args.models is not '' and os.path.exists(args.models):
   model_dicts = torch.load(args.models)
@@ -195,6 +195,7 @@ if args.test:
 for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total=args.episodes, initial=metrics['episodes'][-1] + 1):
   # Model fitting
   losses = []
+  model_modules = transition_model.modules+encoder.modules+observation_model.modules+reward_model.modules
 
   print("training loop")
   for s in tqdm(range(args.collect_interval)):
@@ -247,9 +248,14 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
       for group in model_optimizer.param_groups:
         group['lr'] = min(group['lr'] + args.model_learning_rate / args.model_learning_rate_schedule, args.model_learning_rate)
     model_loss = observation_loss + reward_loss + kl_loss
+    # Update model parameters
+    model_optimizer.zero_grad()
+    model_loss.backward()
+    # print( [module.weight.grad for module in  model_modules])
+    # nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
+    model_optimizer.step()
 
-    #Dreamer implementation: actor loss calculation and optimization
-    model_modules = transition_model.modules+encoder.modules+observation_model.modules+reward_model.modules
+    #Dreamer implementation: actor loss calculation and optimization    
     with torch.no_grad():
       actor_states = posterior_states.detach()
       actor_beliefs = beliefs.detach()
@@ -261,6 +267,12 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     value_pred = bottle(value_model, (imged_beliefs, imged_prior_states))
     returns = lambda_return(imged_reward, value_pred, bootstrap=value_pred[-1], discount=args.discount, lambda_=args.disclam)
     actor_loss = -torch.mean(returns)
+    # Update model parameters
+    actor_optimizer.zero_grad()
+    actor_loss.backward()
+    # nn.utils.clip_grad_norm_(actor_model.parameters(), args.grad_clip_norm, norm_type=2)
+    # print( [module.weight.grad for module in  actor_model.modules])
+    actor_optimizer.step()
  
     #Dreamer implementation: value loss calculation and optimization
     # with FreezeParameters(model_modules+actor_model.modules):
@@ -270,21 +282,29 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
       target_return = returns.detach()
     value_dist = Normal(bottle(value_model, (value_beliefs, value_prior_states)),1) # detach the input tensor from the transition network.
     value_loss = -value_dist.log_prob(target_return).mean(dim=(0, 1)) 
-
     # Update model parameters
-    model_optimizer.zero_grad()
-    actor_optimizer.zero_grad()
     value_optimizer.zero_grad()
-    # (model_loss + actor_loss + value_loss).backward()
-    model_loss.backward()
-    actor_loss.backward()
     value_loss.backward()
-    nn.utils.clip_grad_norm_(params_list, args.grad_clip_norm, norm_type=2)
-    # nn.utils.clip_grad_norm_(value_param_list, args.grad_clip_norm, norm_type=2)
-    model_optimizer.step()
-    actor_optimizer.step()
+    nn.utils.clip_grad_norm_(value_model.parameters(), args.grad_clip_norm, norm_type=2)
+    # print( [module.weight.grad for module in  value_model.modules])
     value_optimizer.step()
-    # Store (0) observation loss (1) reward loss (2) KL loss (3) actor loss (4) value loss
+
+
+    # actor_optimizer.zero_grad()
+    # value_optimizer.zero_grad()
+    # model_optimizer.zero_grad()
+    # model_loss.backward()
+    # actor_loss.backward()
+    # value_loss.backward()
+    # # print( [module.weight.grad for module in  model_modules])
+    # # print( [module.weight.grad for module in  actor_model.modules])
+    # # print( [module.weight.grad for module in  value_model.modules])
+    # nn.utils.clip_grad_norm_(params_list, args.grad_clip_norm, norm_type=2)
+    # model_optimizer.step()
+    # actor_optimizer.step()
+    # value_optimizer.step()
+    
+    # # Store (0) observation loss (1) reward loss (2) KL loss (3) actor loss (4) value loss
     losses.append([observation_loss.item(), reward_loss.item(), kl_loss.item(), actor_loss.item(), value_loss.item()])
 
 
