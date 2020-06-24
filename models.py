@@ -2,6 +2,7 @@ from typing import Optional, List
 import torch
 from torch import jit, nn
 from torch.nn import functional as F
+import torch.distributions
 from torch.distributions.normal import Normal
 from torch.distributions.transforms import Transform, TanhTransform
 from torch.distributions.transformed_distribution import TransformedDistribution
@@ -214,10 +215,14 @@ class ActorModel(jit.ScriptModule):
   def get_action(self, belief, state, det=False):
     action_mean, action_std = self.forward(belief, state)
     dist = Normal(action_mean, action_std)
-    dist = TransformedDistribution(dist, TanhTransform())
+    dist = TransformedDistribution(dist, TanhBijector())
+    dist = torch.distributions.Independent(dist,1)
     dist = SampleDist(dist)
+    # dist = TransformedDistribution(dist, TanhTransform())
+    # dist = SampleDist(dist)
     if det: return dist.mode()
-    else: return dist.sample()
+    else: return dist.rsample()
+
 
 class SymbolicEncoder(jit.ScriptModule):
   def __init__(self, observation_size, embedding_size, activation_function='relu'):
@@ -267,6 +272,35 @@ def Encoder(symbolic, observation_size, embedding_size, activation_function='rel
   else:
     return VisualEncoder(embedding_size, activation_function)
 
+
+def atanh(x):
+    return 0.5 * torch.log((1 + x) / (1 - x))
+
+class TanhBijector(torch.distributions.Transform):
+    def __init__(self):
+        super().__init__()
+        self.bijective = True
+
+    @property
+    def sign(self):
+        return 1.
+
+    def _call(self, x):
+        return torch.tanh(x)
+
+    def _inverse(self, y: torch.Tensor):
+        y = torch.where(
+            (torch.abs(y) <= 1.),
+            torch.clamp(y, -0.99999997, 0.99999997),
+            y)
+        y = atanh(y)
+        # print("mode")
+        return y
+
+    def log_abs_det_jacobian(self, x, y):
+        return 2. * (np.log(2) - x - F.softplus(-2. * x))
+
+
 class SampleDist:
 
   def __init__(self, dist, samples=100):
@@ -281,22 +315,39 @@ class SampleDist:
     return getattr(self._dist, name)
 
   def mean(self):
-    samples = self._dist.sample(self._samples)
-    return torch.mean(samples,0)
+    # samples = self._dist.sample(self._samples)
+    # return torch.mean(samples,0)
+    dist = self._dist.expand((self._samples, *self._dist.batch_shape))
+    sample = dist.rsample()
+    return torch.mean(sample, 0)
 
   def mode(self):
-    sample = self._dist.sample_n(self._samples)
-    # print("sample: ", sample.size()) # torch.Size([100, 1, 6])
-    logprob = self._dist.log_prob(sample)
-    logprob = logprob.sum(2) # needed since the log_prob works differently from tensorflow.
-    # print("logprob: ",logprob.size()) #torch.Size([100, 1]) 
-    logprob_argmax = torch.argmax(logprob,0)
-    # print("logprob argmax:", logprob_argmax.size()) # torch.Size([1]) --> have to be [1]
-    sample = sample[logprob_argmax]
-    # print("sample selected: ",sample.size()) #torch.Size([1, 1, 6]) --> have to be [1, 1, 6]
-    return sample[0]
+    # sample = self._dist.sample_n(self._samples)
+    # # print("sample: ", sample.size()) # torch.Size([100, 1, 6])
+    # logprob = self._dist.log_prob(sample)
+    # logprob = logprob.sum(2) # needed since the log_prob works differently from tensorflow.
+    # # print("logprob: ",logprob.size()) #torch.Size([100, 1]) 
+    # logprob_argmax = torch.argmax(logprob,0)
+    # # print("logprob argmax:", logprob_argmax.size()) # torch.Size([1]) --> have to be [1]
+    # sample = sample[logprob_argmax]
+    # # print("sample selected: ",sample.size()) #torch.Size([1, 1, 6]) --> have to be [1, 1, 6]
+    # return sample[0]
+    dist = self._dist.expand((self._samples, *self._dist.batch_shape))
+    sample = dist.rsample()
+    logprob = dist.log_prob(sample)
+    batch_size = sample.size(1)
+    feature_size = sample.size(2)
+    indices = torch.argmax(logprob, dim=0).reshape(1, batch_size, 1).expand(1, batch_size, feature_size)
+    return torch.gather(sample, 0, indices).squeeze(0)
 
   def entropy(self):
-    sample = self._dist.sample(self._samples)
-    logprob = self.log_prob(sample)
-    return -torch.mean(logprob,0)
+    # sample = self._dist.sample(self._samples)
+    # logprob = self.log_prob(sample)
+    # return -torch.mean(logprob,0)
+    dist = self._dist.expand((self._samples, *self._dist.batch_shape))
+    sample = dist.rsample()
+    logprob = dist.log_prob(sample)
+    return -torch.mean(logprob, 0)
+
+  def sample(self):
+    return self._dist.sample()

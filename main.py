@@ -12,7 +12,7 @@ from env import CONTROL_SUITE_ENVS, Env, GYM_ENVS, EnvBatcher
 from memory import ExperienceReplay
 from models import bottle, Encoder, ObservationModel, RewardModel, TransitionModel, ValueModel, ActorModel
 from planner import MPCPlanner
-from utils import lineplot, write_video, imagine_ahead, lambda_return, FreezeParameters
+from utils import lineplot, write_video, imagine_ahead, lambda_return, FreezeParameters, ActivateParameters
 from tensorboardX import SummaryWriter
 
 
@@ -160,7 +160,7 @@ def update_belief_and_act(args, env, planner, transition_model, encoder, belief,
   else:
     action = planner(belief, posterior_state)  # Get action from planner(q(s_t|o≤t,a<t), p)
   if explore:
-    action = torch.clamp(Normal(action, args.action_noise).sample(), -1, 1) # Add gaussian exploration noise on top of the sampled action
+    action = torch.clamp(Normal(action, args.action_noise).rsample(), -1, 1) # Add gaussian exploration noise on top of the sampled action
     # action = action + args.action_noise * torch.randn_like(action)  # Add exploration noise ε ~ p(ε) to the action
   next_observation, reward, done = env.step(action.cpu() if isinstance(env, EnvBatcher) else action[0].cpu())  # Perform environment step (action repeats handled internally)
   return belief, posterior_state, action, next_observation, reward, done
@@ -252,25 +252,37 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     model_optimizer.zero_grad()
     model_loss.backward()
     # print( [module.weight.grad for module in  model_modules])
-    # nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
+    nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
     model_optimizer.step()
 
     #Dreamer implementation: actor loss calculation and optimization    
     with torch.no_grad():
       actor_states = posterior_states.detach()
       actor_beliefs = beliefs.detach()
-    # with FreezeParameters(model_modules):
-    imagination_traj = imagine_ahead(actor_states, actor_beliefs, actor_model, transition_model, args.planning_horizon)
+    with FreezeParameters(model_modules):
+      imagination_traj = imagine_ahead(actor_states, actor_beliefs, actor_model, transition_model, args.planning_horizon)
+    #####################
+    # #test backprop
+    # flatten = lambda x: x.view([-1]+list(x.size()[2:]))
+    # with torch.no_grad(): # Delete the gradient from transition_model
+    # prev_belief = flatten(actor_beliefs)
+    # prev_state = flatten(actor_states)
+    # print(prev_belief.size())
+    # prev_belief = torch.ones(2450, 200).cuda()
+    # prev_state = torch.ones(2450, 30).cuda()
+    # actions = actor_model.get_action(prev_belief,prev_state)
+    # actor_loss = torch.mean(actions)
+    #####################
     imged_beliefs, imged_prior_states, imged_prior_means, imged_prior_std_devs = imagination_traj
-    # with FreezeParameters(model_modules + value_model.modules):
-    imged_reward = bottle(reward_model, (imged_beliefs, imged_prior_states))
-    value_pred = bottle(value_model, (imged_beliefs, imged_prior_states))
+    with FreezeParameters(model_modules + value_model.modules):
+      imged_reward = bottle(reward_model, (imged_beliefs, imged_prior_states))
+      value_pred = bottle(value_model, (imged_beliefs, imged_prior_states))
     returns = lambda_return(imged_reward, value_pred, bootstrap=value_pred[-1], discount=args.discount, lambda_=args.disclam)
     actor_loss = -torch.mean(returns)
     # Update model parameters
     actor_optimizer.zero_grad()
     actor_loss.backward()
-    # nn.utils.clip_grad_norm_(actor_model.parameters(), args.grad_clip_norm, norm_type=2)
+    nn.utils.clip_grad_norm_(actor_model.parameters(), args.grad_clip_norm, norm_type=2)
     # print( [module.weight.grad for module in  actor_model.modules])
     actor_optimizer.step()
  

@@ -63,7 +63,7 @@ def imagine_ahead(prev_state, prev_belief, policy, transition_model, planning_ho
   for t in range(T - 1):
     _state = prior_states[t]
     # print(beliefs[t], _state)
-    actions = policy.get_action(beliefs[t],_state)
+    actions = policy.get_action(beliefs[t].detach(),_state.detach())
     # actions = policy.get_action(beliefs[t],_state)
     # print("action size inside the imagine_ahead: ",actions.size())
     # Compute belief (deterministic hidden state)
@@ -137,6 +137,29 @@ class FreezeParameters:
   def __enter__(self):
       for param in get_parameters(self.modules):
           param.requires_grad = False
+
+  def __exit__(self, exc_type, exc_val, exc_tb):
+      for i, param in enumerate(get_parameters(self.modules)):
+          param.requires_grad = self.param_states[i]
+
+class ActivateParameters:
+  def __init__(self, modules: Iterable[Module]):
+      """
+      Context manager to locally Activate the gradients.
+      example:
+      ```
+      with ActivateParameters([module]):
+          output_tensor = module(input_tensor)
+      ```
+      :param modules: iterable of modules. used to call .parameters() to freeze gradients.
+      """
+      self.modules = modules
+      self.param_states = [p.requires_grad for p in get_parameters(self.modules)]
+
+  def __enter__(self):
+      for param in get_parameters(self.modules):
+          # print(param.requires_grad)
+          param.requires_grad = True
 
   def __exit__(self, exc_type, exc_val, exc_tb):
       for i, param in enumerate(get_parameters(self.modules)):

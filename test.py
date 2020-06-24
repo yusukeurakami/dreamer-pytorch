@@ -8,28 +8,30 @@ from torch.nn import functional as F
 transition_model = torch.nn.Linear(20, 10)
 value_model = torch.nn.Linear(10, 2)
 
-with FreezeParameters([value_model]):
-    inp1 = torch.ones(20)
-    returns = torch.zeros(2)
-    inp2 = transition_model(inp1)
-    value_pred = value_model(inp2)
-    target_return = returns.detach()
-    transition_loss = F.mse_loss(value_pred, target_return).mean(dim=(0))
+# with FreezeParameters([value_model]):
+inp1 = torch.ones(20)
+returns = torch.zeros(2)
+inp2 = transition_model(inp1)
+with torch.no_grad():
+    inp2 = inp2.detach()
+value_pred = value_model(inp2)
+target_return = returns.detach()
+transition_loss = F.mse_loss(value_pred, target_return).mean(dim=(0))
 
-with FreezeParameters([transition_model]):
-    inp1 = torch.ones(20)
-    returns = torch.zeros(2)
-    inp2 = transition_model(inp1)
-    value_pred = value_model(inp2)
-    target_return = returns.detach()
-    value_loss = F.mse_loss(value_pred, target_return).mean(dim=(0))
+# with FreezeParameters([transition_model]):
+#     inp1 = torch.ones(20)
+#     returns = torch.zeros(2)
+#     inp2 = transition_model(inp1)
+#     value_pred = value_model(inp2)
+#     target_return = returns.detach()
+#     value_loss = F.mse_loss(value_pred, target_return).mean(dim=(0))
 
 transition_loss.backward()
 print(transition_model.weight.grad)
 print(value_model.weight.grad)
-value_loss.backward()
-print(transition_model.weight.grad)
-print(value_model.weight.grad)
+# value_loss.backward()
+# print(transition_model.weight.grad)
+# print(value_model.weight.grad)
 
 
 # disclam = 0.95
