@@ -7,7 +7,11 @@ Dreamer implementation in PyTorch
 This repo implements the Dreamer algorithm from [Dream to Control: Learning Behaviors By latent Imagination](https://arxiv.org/pdf/1912.01603.pdf) based on the [PlaNet-Pytorch](https://github.com/Kaixhin/PlaNet). It has been confirmed working on the DeepMind Control Suite/MuJoCo environment. Hyperparameters have been taken from the paper.
 
 ## Installation
-To install all dependencies with Anaconda run `conda env create -f conda_env.yml` and use `source activate dreamer` to activate the environment. 
+To install all dependencies with Anaconda run using the following commands. 
+
+`conda env create -f conda_env.yml` 
+
+`source activate dreamer` 
 
 ## Training (e.g. DMC walker-walk)
 ```bash
@@ -21,17 +25,17 @@ Use Tensorboard to monitor the training.
 `tensorboard --logdir results`
 
 ## Results
-Results and pretrained models can be found in the [releases](https://github.com/Kaixhin/PlaNet/releases).
+The performances are compared with the other SoTA algorithms as follows 
+(Note! Tested once using seed 0.)
 
-The performances are compared with the other SoTA algorithms as follows (Note! Tested once using seed 0.)
 * [State-SAC](https://github.com/denisyarats/pytorch_sac)
 * [PlaNet-PyTorch](https://github.com/Kaixhin/PlaNet)
 * [SAC-AE](https://github.com/denisyarats/pytorch_sac_ae)
 * [SLAC](https://github.com/ku2482/slac.pytorch)
 * [CURL](https://github.com/MishaLaskin/curl)
 * [Dreamer (tensorflow2 implementation)](https://github.com/danijar/dreamer)
-<!-- 
-![finger-spin](imgs/finger-spin.png) -->
+
+### NOTE! All the steps below are environment steps. (All the results below are trained 1000 episodes. Each espisode length is 1000 steps. Actual number of sampled data are steps/action_repeat. )
 
 <p align="center">
   <img width="800" src="./imgs/finger-spin.png">
@@ -42,6 +46,7 @@ The performances are compared with the other SoTA algorithms as follows (Note! T
   <img width="800" src="./imgs/ball_in_cup-catch.png">
 </p>
 
+Pretrained models can be found in the [releases](https://github.com/Kaixhin/PlaNet/releases).
 
 ## Links
 - [Dream to Control: Learning Behaviors By latent Imagination](https://ai.googleblog.com/2020/03/introducing-dreamer-scalable.html)

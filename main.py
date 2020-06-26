@@ -18,7 +18,7 @@ from tensorboardX import SummaryWriter
 
 # Hyperparameters
 parser = argparse.ArgumentParser(description='PlaNet or Dreamer')
-parser.add_argument('--algo', type=str, default='planet', help='planet or dreamer')
+parser.add_argument('--algo', type=str, default='dreamer', help='planet or dreamer')
 parser.add_argument('--id', type=str, default='default', help='Experiment ID')
 parser.add_argument('--seed', type=int, default=1, metavar='S', help='Random seed')
 parser.add_argument('--disable-cuda', action='store_true', help='Disable CUDA')
@@ -39,7 +39,7 @@ parser.add_argument('--seed-episodes', type=int, default=5, metavar='S', help='S
 parser.add_argument('--collect-interval', type=int, default=100, metavar='C', help='Collect interval')
 parser.add_argument('--batch-size', type=int, default=50, metavar='B', help='Batch size')
 parser.add_argument('--chunk-size', type=int, default=50, metavar='L', help='Chunk size')
-parser.add_argument('--worldmodel-MSEloss', action='store_true', help='use MSE loss for observation_model and reward_model training')
+parser.add_argument('--worldmodel-LogProbLoss', action='store_true', help='use LogProb loss for observation_model and reward_model training')
 parser.add_argument('--overshooting-distance', type=int, default=50, metavar='D', help='Latent overshooting distance/latent overshooting weight for t = 1')
 parser.add_argument('--overshooting-kl-beta', type=float, default=0, metavar='β>1', help='Latent overshooting KL weight for t > 1 (0 to disable)')
 parser.add_argument('--overshooting-reward-scale', type=float, default=0, metavar='R>1', help='Latent overshooting reward prediction weight for t > 1 (0 to disable)')
@@ -192,28 +192,23 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
 
   print("training loop")
   for s in tqdm(range(args.collect_interval)):
-    # with FreezeParameters(actor_model.modules+value_model.modules):
-    # print("collect interval", s)
     # Draw sequence chunks {(o_t, a_t, r_t+1, terminal_t+1)} ~ D uniformly at random from the dataset (including terminal flags)
     observations, actions, rewards, nonterminals = D.sample(args.batch_size, args.chunk_size) # Transitions start at time t = 0
-    # batch_size=50, chunk_size=50, Output size = [50 50]. Chunk is the length of the time sequence.
-    # print("rewards size: ",rewards[:-1].size()) # [49, 50] 
     # Create initial belief and state for time t = 0
     init_belief, init_state = torch.zeros(args.batch_size, args.belief_size, device=args.device), torch.zeros(args.batch_size, args.state_size, device=args.device)
     # Update belief/state using posterior from previous belief/state, previous action and current observation (over entire sequence at once)
-    #(49,50,200), (49,50,30), (49,50,30), (49,50,30), (49,50,30), (49,50,30), (49,50,30)
     beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = transition_model(init_state, actions[:-1], init_belief, bottle(encoder, (observations[1:], )), nonterminals[:-1])
     # Calculate observation likelihood, reward likelihood and KL losses (for t = 0 only for latent overshooting); sum over final dims, average over batch and time (original implementation, though paper seems to miss 1/T scaling?)
-    if args.worldmodel_MSEloss:
-      observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
-    else:
+    if args.worldmodel_LogProbLoss:
       observation_dist = Normal(bottle(observation_model, (beliefs, posterior_states)), 1)
       observation_loss = -observation_dist.log_prob(observations[1:]).sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
-    if args.worldmodel_MSEloss:
-      reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards[:-1], reduction='none').mean(dim=(0,1))
-    else:
+    else: 
+      observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
+    if args.worldmodel_LogProbLoss:
       reward_dist = Normal(bottle(reward_model, (beliefs, posterior_states)),1)
       reward_loss = -reward_dist.log_prob(rewards[:-1]).mean(dim=(0, 1))
+    else:
+      reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards[:-1], reduction='none').mean(dim=(0,1))
     # transition loss
     div = kl_divergence(Normal(posterior_means, posterior_std_devs), Normal(prior_means, prior_std_devs)).sum(dim=2)
     kl_loss = torch.max(div, free_nats).mean(dim=(0, 1))  # Note that normalisation by overshooting distance and weighting by overshooting distance cancel out
@@ -254,18 +249,6 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
       actor_beliefs = beliefs.detach()
     with FreezeParameters(model_modules):
       imagination_traj = imagine_ahead(actor_states, actor_beliefs, actor_model, transition_model, args.planning_horizon)
-    #####################
-    # #test backprop
-    # flatten = lambda x: x.view([-1]+list(x.size()[2:]))
-    # with torch.no_grad(): # Delete the gradient from transition_model
-    # prev_belief = flatten(actor_beliefs)
-    # prev_state = flatten(actor_states)
-    # print(prev_belief.size())
-    # prev_belief = torch.ones(2450, 200).cuda()
-    # prev_state = torch.ones(2450, 30).cuda()
-    # actions = actor_model.get_action(prev_belief,prev_state)
-    # actor_loss = torch.mean(actions)
-    #####################
     imged_beliefs, imged_prior_states, imged_prior_means, imged_prior_std_devs = imagination_traj
     with FreezeParameters(model_modules + value_model.modules):
       imged_reward = bottle(reward_model, (imged_beliefs, imged_prior_states))
@@ -276,7 +259,6 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     actor_optimizer.zero_grad()
     actor_loss.backward()
     nn.utils.clip_grad_norm_(actor_model.parameters(), args.grad_clip_norm, norm_type=2)
-    # print( [module.weight.grad for module in  actor_model.modules])
     actor_optimizer.step()
  
     #Dreamer implementation: value loss calculation and optimization
@@ -410,20 +392,3 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
 
 # Close training environment
 env.close()
-
-
-
-
-# actor_optimizer.zero_grad()
-# value_optimizer.zero_grad()
-# model_optimizer.zero_grad()
-# model_loss.backward()
-# actor_loss.backward()
-# value_loss.backward()
-# # print( [module.weight.grad for module in  model_modules])
-# # print( [module.weight.grad for module in  actor_model.modules])
-# # print( [module.weight.grad for module in  value_model.modules])
-# nn.utils.clip_grad_norm_(params_list, args.grad_clip_norm, norm_type=2)
-# model_optimizer.step()
-# actor_optimizer.step()
-# value_optimizer.step()

@@ -12,16 +12,9 @@ import numpy as np
 # Wraps the input tuple for a function to process a time x batch x features sequence in batch x features (assumes one output)
 def bottle(f, x_tuple):
   x_sizes = tuple(map(lambda x: x.size(), x_tuple))
-  # model:  print("bottle: x_sizes ", x_sizes) (torch.Size([49, 50, 3, 64, 64]),)
-  # reward: print("bottle: x_sizes ", x_sizes) (torch.Size([49, 50, 200]), torch.Size([49, 50, 30]))
-  # print("??? function ", type(map(lambda x: x[0].view(x[1][0] * x[1][1], *x[1][2:]), zip(x_tuple, x_sizes)))) [2450, 230]
   y = f(*map(lambda x: x[0].view(x[1][0] * x[1][1], *x[1][2:]), zip(x_tuple, x_sizes)))
-  # model:  print("bottle: output before reshape ", y.size()) torch.Size([2450])
-  # reward: print("bottle: output before reshape ", y.size()) torch.Size([2450, 1024])
   y_size = y.size()
   output = y.view(x_sizes[0][0], x_sizes[0][1], *y_size[1:])
-  # model:  print("bottle: output after reshape ", output.size())  torch.Size([49, 50])
-  # reward: print("bottle: output after reshape ", output.size())  torch.Size([49, 50, 1024])
   return output
 
 
@@ -61,13 +54,11 @@ class TransitionModel(jit.ScriptModule):
     T = actions.size(0) + 1
     beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T
     beliefs[0], prior_states[0], posterior_states[0] = prev_belief, prev_state, prev_state
-    # print("prev_belief.size(), prev_state.size(), prev_state.size() ",prev_belief.size(), prev_state.size(), prev_state.size())
     # Loop over time sequence
     for t in range(T - 1):
       _state = prior_states[t] if observations is None else posterior_states[t]  # Select appropriate previous state
       _state = _state if nonterminals is None else _state * nonterminals[t]  # Mask if previous transition was terminal
       # Compute belief (deterministic hidden state)
-      # print("model ",torch.cat([_state, actions[t]], dim=1).size())
       hidden = self.act_fn(self.fc_embed_state_action(torch.cat([_state, actions[t]], dim=1)))
       beliefs[t + 1] = self.rnn(hidden, beliefs[t])
       # Compute state prior by applying transition dynamics
@@ -151,18 +142,13 @@ class RewardModel(jit.ScriptModule):
   @jit.script_method
   def forward(self, belief, state):
     x = torch.cat([belief, state],dim=1)
-    # print("value net input: ",x.size()) #train loop [2450, 230] data collection [12000, 230] : 2450=49batches*50timesteps: 12000=12horizon steps*1000 candidates
     hidden = self.act_fn(self.fc1(x))
-    # print("value net 2nd layer input: ",hidden.size()) #train loop [2450, 200] data collection [12000, 200]
     hidden = self.act_fn(self.fc2(hidden))
-    # print("value net 3rd layer input: ",hidden.size()) #train loop [2450, 200] data collection [12000, 200]
     reward = self.fc3(hidden).squeeze(dim=1)
-    # print("value net last layer output: ",reward.size()) #train loop [2450] data collection [12000]
     return reward
 
 class ValueModel(jit.ScriptModule):
   def __init__(self, belief_size, state_size, hidden_size, activation_function='relu'):
-    # [--belief-size: 200, --hidden-size: 200, --state-size: 30]
     super().__init__()
     self.act_fn = getattr(F, activation_function)
     self.fc1 = nn.Linear(belief_size + state_size, hidden_size)
@@ -218,8 +204,6 @@ class ActorModel(jit.ScriptModule):
     dist = TransformedDistribution(dist, TanhBijector())
     dist = torch.distributions.Independent(dist,1)
     dist = SampleDist(dist)
-    # dist = TransformedDistribution(dist, TanhTransform())
-    # dist = SampleDist(dist)
     if det: return dist.mode()
     else: return dist.rsample()
 
@@ -273,6 +257,8 @@ def Encoder(symbolic, observation_size, embedding_size, activation_function='rel
     return VisualEncoder(embedding_size, activation_function)
 
 
+# "atanh", "TanhBijector" and "SampleDist" are from the following repo
+# https://github.com/juliusfrost/dreamer-pytorch
 def atanh(x):
     return 0.5 * torch.log((1 + x) / (1 - x))
 
@@ -282,11 +268,9 @@ class TanhBijector(torch.distributions.Transform):
         self.bijective = True
 
     @property
-    def sign(self):
-        return 1.
+    def sign(self): return 1.
 
-    def _call(self, x):
-        return torch.tanh(x)
+    def _call(self, x): return torch.tanh(x)
 
     def _inverse(self, y: torch.Tensor):
         y = torch.where(
@@ -294,7 +278,6 @@ class TanhBijector(torch.distributions.Transform):
             torch.clamp(y, -0.99999997, 0.99999997),
             y)
         y = atanh(y)
-        # print("mode")
         return y
 
     def log_abs_det_jacobian(self, x, y):
@@ -302,7 +285,6 @@ class TanhBijector(torch.distributions.Transform):
 
 
 class SampleDist:
-
   def __init__(self, dist, samples=100):
     self._dist = dist
     self._samples = samples
@@ -315,23 +297,10 @@ class SampleDist:
     return getattr(self._dist, name)
 
   def mean(self):
-    # samples = self._dist.sample(self._samples)
-    # return torch.mean(samples,0)
-    dist = self._dist.expand((self._samples, *self._dist.batch_shape))
     sample = dist.rsample()
     return torch.mean(sample, 0)
 
   def mode(self):
-    # sample = self._dist.sample_n(self._samples)
-    # # print("sample: ", sample.size()) # torch.Size([100, 1, 6])
-    # logprob = self._dist.log_prob(sample)
-    # logprob = logprob.sum(2) # needed since the log_prob works differently from tensorflow.
-    # # print("logprob: ",logprob.size()) #torch.Size([100, 1]) 
-    # logprob_argmax = torch.argmax(logprob,0)
-    # # print("logprob argmax:", logprob_argmax.size()) # torch.Size([1]) --> have to be [1]
-    # sample = sample[logprob_argmax]
-    # # print("sample selected: ",sample.size()) #torch.Size([1, 1, 6]) --> have to be [1, 1, 6]
-    # return sample[0]
     dist = self._dist.expand((self._samples, *self._dist.batch_shape))
     sample = dist.rsample()
     logprob = dist.log_prob(sample)
@@ -341,9 +310,6 @@ class SampleDist:
     return torch.gather(sample, 0, indices).squeeze(0)
 
   def entropy(self):
-    # sample = self._dist.sample(self._samples)
-    # logprob = self.log_prob(sample)
-    # return -torch.mean(logprob,0)
     dist = self._dist.expand((self._samples, *self._dist.batch_shape))
     sample = dist.rsample()
     logprob = dist.log_prob(sample)

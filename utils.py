@@ -78,10 +78,7 @@ def imagine_ahead(prev_state, prev_belief, policy, transition_model, planning_ho
 def lambda_return(imged_reward, value_pred, bootstrap, discount=0.99, lambda_=0.95):
   # Setting lambda=1 gives a discounted Monte Carlo return.
   # Setting lambda=0 gives a fixed 1-step return.
-  # print("input of lambda return:",imged_reward.size(), value_pred.size(), bootstrap.size(), lambda_)
-  # (11,50), (11,50), (50), 0.95
   next_values = torch.cat([value_pred[1:], bootstrap[None]], 0)
-  # print("next value", next_values.size())
   discount_tensor = discount * torch.ones_like(imged_reward) #pcont
   inputs = imged_reward + discount_tensor * next_values * (1 - lambda_)
   last = bootstrap
@@ -96,6 +93,29 @@ def lambda_return(imged_reward, value_pred, bootstrap, discount=0.99, lambda_=0.
   returns = outputs
   return returns
 
+class ActivateParameters:
+  def __init__(self, modules: Iterable[Module]):
+      """
+      Context manager to locally Activate the gradients.
+      example:
+      ```
+      with ActivateParameters([module]):
+          output_tensor = module(input_tensor)
+      ```
+      :param modules: iterable of modules. used to call .parameters() to freeze gradients.
+      """
+      self.modules = modules
+      self.param_states = [p.requires_grad for p in get_parameters(self.modules)]
+
+  def __enter__(self):
+      for param in get_parameters(self.modules):
+          # print(param.requires_grad)
+          param.requires_grad = True
+
+  def __exit__(self, exc_type, exc_val, exc_tb):
+      for i, param in enumerate(get_parameters(self.modules)):
+          param.requires_grad = self.param_states[i]
+          
 # "get_parameters" and "FreezeParameters" are from the following repo
 # https://github.com/juliusfrost/dreamer-pytorch
 def get_parameters(modules: Iterable[Module]):
@@ -127,29 +147,6 @@ class FreezeParameters:
   def __enter__(self):
       for param in get_parameters(self.modules):
           param.requires_grad = False
-
-  def __exit__(self, exc_type, exc_val, exc_tb):
-      for i, param in enumerate(get_parameters(self.modules)):
-          param.requires_grad = self.param_states[i]
-
-class ActivateParameters:
-  def __init__(self, modules: Iterable[Module]):
-      """
-      Context manager to locally Activate the gradients.
-      example:
-      ```
-      with ActivateParameters([module]):
-          output_tensor = module(input_tensor)
-      ```
-      :param modules: iterable of modules. used to call .parameters() to freeze gradients.
-      """
-      self.modules = modules
-      self.param_states = [p.requires_grad for p in get_parameters(self.modules)]
-
-  def __enter__(self):
-      for param in get_parameters(self.modules):
-          # print(param.requires_grad)
-          param.requires_grad = True
 
   def __exit__(self, exc_type, exc_val, exc_tb):
       for i, param in enumerate(get_parameters(self.modules)):
