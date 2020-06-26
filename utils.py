@@ -50,7 +50,6 @@ def imagine_ahead(prev_state, prev_belief, policy, transition_model, planning_ho
           torch.Size([49, 50, 200]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30])
   '''
   flatten = lambda x: x.view([-1]+list(x.size()[2:]))
-  # with torch.no_grad(): # Delete the gradient from transition_model
   prev_belief = flatten(prev_belief)
   prev_state = flatten(prev_state)
   
@@ -62,13 +61,8 @@ def imagine_ahead(prev_state, prev_belief, policy, transition_model, planning_ho
   # Loop over time sequence
   for t in range(T - 1):
     _state = prior_states[t]
-    # print(beliefs[t], _state)
     actions = policy.get_action(beliefs[t].detach(),_state.detach())
-    # actions = policy.get_action(beliefs[t],_state)
-    # print("action size inside the imagine_ahead: ",actions.size())
     # Compute belief (deterministic hidden state)
-
-    # with FreezeParameters(transition_model.modules):
     hidden = transition_model.act_fn(transition_model.fc_embed_state_action(torch.cat([_state, actions], dim=1)))
     beliefs[t + 1] = transition_model.rnn(hidden, beliefs[t])
     # Compute state prior by applying transition dynamics
@@ -97,16 +91,12 @@ def lambda_return(imged_reward, value_pred, bootstrap, discount=0.99, lambda_=0.
     inp, disc = inputs[index], discount_tensor[index]
     last = inp + disc*lambda_*last
     outputs.append(last)
-    # print("last:", last.size())
   outputs = list(reversed(outputs))
   outputs = torch.stack(outputs, 0)
-  # outputs = [torch.stack(,0) for x in outputs]
-  # print("stacked output: ",outputs.size())
-  # print("returns:", returns)
   returns = outputs
   return returns
 
-# Inspired from the following repo
+# "get_parameters" and "FreezeParameters" are from the following repo
 # https://github.com/juliusfrost/dreamer-pytorch
 def get_parameters(modules: Iterable[Module]):
     """
