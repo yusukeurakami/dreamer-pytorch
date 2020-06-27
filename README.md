@@ -38,6 +38,10 @@ The performances are compared with the other SoTA algorithms as follows
 ### NOTE! All the steps below are environment steps. (All the results below are trained 1000 episodes. Each espisode length is 1000 steps. Actual number of sampled data are steps/action_repeat. )
 
 <p align="center">
+  <img width="800" src="./imgs/results_table.png">
+</p>
+
+<p align="center">
   <img width="800" src="./imgs/finger-spin.png">
   <img width="800" src="./imgs/walker-walk.png">
   <img width="800" src="./imgs/cheetah-run.png">
