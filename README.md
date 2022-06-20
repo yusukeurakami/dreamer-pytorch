@@ -3,7 +3,13 @@ Dreamer implementation in PyTorch
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
 
-## Dreamer
+## Dreamer-torch1.8.2
+### **Updated the code to catch up with the latest pytorch version.**
+
+### **Previous version for pytorch 1.4 is left at `dreamer` branch.**
+
+### Not conpatible with open-source Mujoco yet. Please download and use mujoco-200 and free license key from [here](https://www.roboti.us/)
+
 This repo implements the Dreamer algorithm from [Dream to Control: Learning Behaviors By latent Imagination](https://arxiv.org/pdf/1912.01603.pdf) based on the [PlaNet-Pytorch](https://github.com/Kaixhin/PlaNet). It has been confirmed working on the DeepMind Control Suite/MuJoCo environment. Hyperparameters have been taken from the paper.
 
 ## Installation
