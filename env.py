@@ -30,6 +30,7 @@ CONTROL_SUITE_ENVS = [
     'humanoid-walk',
     'fish-swim',
     'acrobot-swingup',
+    'quadruped-run'
 ]
 CONTROL_SUITE_ACTION_REPEATS = {
     'cartpole': 8,
@@ -41,6 +42,7 @@ CONTROL_SUITE_ACTION_REPEATS = {
     'humanoid': 2,
     'fish': 2,
     'acrobot': 4,
+    'quadruped': 2
 }
 
 
