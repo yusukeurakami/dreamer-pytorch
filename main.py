@@ -535,7 +535,7 @@ for episode in tqdm(
             torch.zeros(1, args.state_size, device=args.device),
             torch.zeros(1, env.action_size, device=args.device),
         )
-        pbar = tqdm(range(args.max_episode_length // args.action_repeat))
+        pbar = tqdm(range(1, args.max_episode_length // args.action_repeat + 1))
         for t in pbar:
             # print("step",t)
             belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(
@@ -560,7 +560,7 @@ for episode in tqdm(
                 break
 
         # Update and plot train reward metrics
-        metrics['steps'].append(t + metrics['steps'][-1])
+        metrics['steps'].append(t * args.action_repeat + metrics['steps'][-1])
         metrics['episodes'].append(episode)
         metrics['train_rewards'].append(total_reward)
         lineplot(
