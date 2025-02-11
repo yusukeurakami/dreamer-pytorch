@@ -175,7 +175,7 @@ elif not args.test:
             D.append(observation, action, reward, done)
             observation = next_observation
             t += 1
-        metrics['steps'].append(t * args.action_repeat + (0 if len(metrics['steps']) == 0 else metrics['steps'][-1]))
+        metrics['steps'].append(int(t * args.action_repeat) + (0 if len(metrics['steps']) == 0 else metrics['steps'][-1]))
         metrics['episodes'].append(s)
 print("experience replay buffer is ready")
 
@@ -336,8 +336,8 @@ for episode in tqdm(
     losses = []
     model_modules = transition_model.modules + encoder.modules + observation_model.modules + reward_model.modules
 
-    print("training loop")
-    for s in tqdm(range(args.collect_interval)):
+    print("\n training loop")
+    for s in tqdm(range(1, args.collect_interval + 1)):
         # Draw sequence chunks {(o_t, a_t, r_t+1, terminal_t+1)} ~ D uniformly at random from the dataset (including terminal flags)
         observations, actions, rewards, nonterminals = D.sample(
             args.batch_size, args.chunk_size
@@ -535,7 +535,7 @@ for episode in tqdm(
             torch.zeros(1, args.state_size, device=args.device),
             torch.zeros(1, env.action_size, device=args.device),
         )
-        pbar = tqdm(range(args.max_episode_length // args.action_repeat))
+        pbar = tqdm(range(1, args.max_episode_length // args.action_repeat + 1))
         for t in pbar:
             # print("step",t)
             belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(
@@ -560,7 +560,7 @@ for episode in tqdm(
                 break
 
         # Update and plot train reward metrics
-        metrics['steps'].append(t + metrics['steps'][-1])
+        metrics['steps'].append(int(t * args.action_repeat) + metrics['steps'][-1])
         metrics['episodes'].append(episode)
         metrics['train_rewards'].append(total_reward)
         lineplot(
@@ -651,7 +651,7 @@ for episode in tqdm(
         test_envs.close()
 
     writer.add_scalar("train_reward", metrics['train_rewards'][-1], metrics['steps'][-1])
-    writer.add_scalar("train/episode_reward", metrics['train_rewards'][-1], metrics['steps'][-1] * args.action_repeat)
+    writer.add_scalar("train/episode_reward", metrics['train_rewards'][-1], metrics['steps'][-1])
     writer.add_scalar("observation_loss", metrics['observation_loss'][0][-1], metrics['steps'][-1])
     writer.add_scalar("reward_loss", metrics['reward_loss'][0][-1], metrics['steps'][-1])
     writer.add_scalar("kl_loss", metrics['kl_loss'][0][-1], metrics['steps'][-1])
