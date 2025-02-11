@@ -479,7 +479,7 @@ for episode in tqdm(
             imged_reward = bottle(reward_model, (imged_beliefs, imged_prior_states))
             value_pred = bottle(value_model, (imged_beliefs, imged_prior_states))
         returns = lambda_return(
-            imged_reward, value_pred, bootstrap=value_pred[-1], discount=args.discount, lambda_=args.disclam
+            imged_reward[:-1], value_pred[:-1], bootstrap=value_pred[-1], discount=args.discount, lambda_=args.disclam
         )
         actor_loss = -torch.mean(returns)
         # Update model parameters
@@ -494,7 +494,7 @@ for episode in tqdm(
             value_prior_states = imged_prior_states.detach()
             target_return = returns.detach()
         value_dist = Normal(
-            bottle(value_model, (value_beliefs, value_prior_states)), 1
+            bottle(value_model, (value_beliefs, value_prior_states))[:-1], 1
         )  # detach the input tensor from the transition network.
         value_loss = -value_dist.log_prob(target_return).mean(dim=(0, 1))
         # Update model parameters
