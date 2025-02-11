@@ -91,7 +91,7 @@ parser.add_argument(
 parser.add_argument('--global-kl-beta', type=float, default=0, metavar='βg', help='Global KL weight (0 to disable)')
 parser.add_argument('--free-nats', type=float, default=3, metavar='F', help='Free nats')
 parser.add_argument('--bit-depth', type=int, default=5, metavar='B', help='Image bit depth (quantisation)')
-parser.add_argument('--model_learning-rate', type=float, default=1e-3, metavar='α', help='Learning rate')
+parser.add_argument('--model_learning-rate', type=float, default=6e-4, metavar='α', help='Learning rate')
 parser.add_argument('--actor_learning-rate', type=float, default=8e-5, metavar='α', help='Learning rate')
 parser.add_argument('--value_learning-rate', type=float, default=8e-5, metavar='α', help='Learning rate')
 parser.add_argument(
