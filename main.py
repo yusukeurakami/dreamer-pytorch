@@ -681,7 +681,7 @@ for episode in tqdm(
         )
         if args.checkpoint_experience:
             torch.save(
-                D, os.path.join(results_dir, 'experience.pth')
+                D, os.path.join(results_dir, 'experience.pth'), pickle_protocol=5
             )  # Warning: will fail with MemoryError with large memory sizes
 
 
