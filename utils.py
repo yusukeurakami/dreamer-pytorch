@@ -74,7 +74,7 @@ def imagine_ahead(prev_state, prev_belief, policy, transition_model, planning_ho
     prev_state = flatten(prev_state)
 
     # Create lists for hidden states (cannot use single tensor as buffer because autograd won't work with inplace writes)
-    T = planning_horizon
+    T = planning_horizon + 1
     beliefs, prior_states, prior_means, prior_std_devs = (
         [torch.empty(0)] * T,
         [torch.empty(0)] * T,

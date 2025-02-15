@@ -91,7 +91,7 @@ parser.add_argument(
 parser.add_argument('--global-kl-beta', type=float, default=0, metavar='βg', help='Global KL weight (0 to disable)')
 parser.add_argument('--free-nats', type=float, default=3, metavar='F', help='Free nats')
 parser.add_argument('--bit-depth', type=int, default=5, metavar='B', help='Image bit depth (quantisation)')
-parser.add_argument('--model_learning-rate', type=float, default=1e-3, metavar='α', help='Learning rate')
+parser.add_argument('--model_learning-rate', type=float, default=6e-4, metavar='α', help='Learning rate')
 parser.add_argument('--actor_learning-rate', type=float, default=8e-5, metavar='α', help='Learning rate')
 parser.add_argument('--value_learning-rate', type=float, default=8e-5, metavar='α', help='Learning rate')
 parser.add_argument(
@@ -175,7 +175,7 @@ elif not args.test:
             D.append(observation, action, reward, done)
             observation = next_observation
             t += 1
-        metrics['steps'].append(t * args.action_repeat + (0 if len(metrics['steps']) == 0 else metrics['steps'][-1]))
+        metrics['steps'].append(int(t * args.action_repeat) + (0 if len(metrics['steps']) == 0 else metrics['steps'][-1]))
         metrics['episodes'].append(s)
 print("experience replay buffer is ready")
 
@@ -336,8 +336,8 @@ for episode in tqdm(
     losses = []
     model_modules = transition_model.modules + encoder.modules + observation_model.modules + reward_model.modules
 
-    print("training loop")
-    for s in tqdm(range(args.collect_interval)):
+    print("\n training loop")
+    for s in tqdm(range(1, args.collect_interval + 1)):
         # Draw sequence chunks {(o_t, a_t, r_t+1, terminal_t+1)} ~ D uniformly at random from the dataset (including terminal flags)
         observations, actions, rewards, nonterminals = D.sample(
             args.batch_size, args.chunk_size
@@ -479,7 +479,7 @@ for episode in tqdm(
             imged_reward = bottle(reward_model, (imged_beliefs, imged_prior_states))
             value_pred = bottle(value_model, (imged_beliefs, imged_prior_states))
         returns = lambda_return(
-            imged_reward, value_pred, bootstrap=value_pred[-1], discount=args.discount, lambda_=args.disclam
+            imged_reward[:-1], value_pred[:-1], bootstrap=value_pred[-1], discount=args.discount, lambda_=args.disclam
         )
         actor_loss = -torch.mean(returns)
         # Update model parameters
@@ -494,7 +494,7 @@ for episode in tqdm(
             value_prior_states = imged_prior_states.detach()
             target_return = returns.detach()
         value_dist = Normal(
-            bottle(value_model, (value_beliefs, value_prior_states)), 1
+            bottle(value_model, (value_beliefs, value_prior_states))[:-1], 1
         )  # detach the input tensor from the transition network.
         value_loss = -value_dist.log_prob(target_return).mean(dim=(0, 1))
         # Update model parameters
@@ -535,7 +535,7 @@ for episode in tqdm(
             torch.zeros(1, args.state_size, device=args.device),
             torch.zeros(1, env.action_size, device=args.device),
         )
-        pbar = tqdm(range(args.max_episode_length // args.action_repeat))
+        pbar = tqdm(range(1, args.max_episode_length // args.action_repeat + 1))
         for t in pbar:
             # print("step",t)
             belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(
@@ -560,7 +560,7 @@ for episode in tqdm(
                 break
 
         # Update and plot train reward metrics
-        metrics['steps'].append(t + metrics['steps'][-1])
+        metrics['steps'].append(int(t * args.action_repeat) + metrics['steps'][-1])
         metrics['episodes'].append(episode)
         metrics['train_rewards'].append(total_reward)
         lineplot(
@@ -651,7 +651,7 @@ for episode in tqdm(
         test_envs.close()
 
     writer.add_scalar("train_reward", metrics['train_rewards'][-1], metrics['steps'][-1])
-    writer.add_scalar("train/episode_reward", metrics['train_rewards'][-1], metrics['steps'][-1] * args.action_repeat)
+    writer.add_scalar("train/episode_reward", metrics['train_rewards'][-1], metrics['steps'][-1])
     writer.add_scalar("observation_loss", metrics['observation_loss'][0][-1], metrics['steps'][-1])
     writer.add_scalar("reward_loss", metrics['reward_loss'][0][-1], metrics['steps'][-1])
     writer.add_scalar("kl_loss", metrics['kl_loss'][0][-1], metrics['steps'][-1])
@@ -681,7 +681,7 @@ for episode in tqdm(
         )
         if args.checkpoint_experience:
             torch.save(
-                D, os.path.join(results_dir, 'experience.pth')
+                D, os.path.join(results_dir, 'experience.pth'), pickle_protocol=5
             )  # Warning: will fail with MemoryError with large memory sizes
 
 
